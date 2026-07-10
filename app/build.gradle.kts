@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.nsavage.stepcast"
+    namespace = "com.stepcast.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.nsavage.stepcast"
+        applicationId = "com.stepcast.app"
         minSdk = 26
         targetSdk = 35
         // bump versionCode on every meaningful cut; versionName tracks the

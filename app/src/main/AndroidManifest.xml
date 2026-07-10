@@ -64,17 +64,17 @@
             android:name=".playback.CommandReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.nsavage.stepcast.command.PLAY" />
-                <action android:name="com.nsavage.stepcast.command.PAUSE" />
-                <action android:name="com.nsavage.stepcast.command.TOGGLE" />
-                <action android:name="com.nsavage.stepcast.command.NEXT" />
-                <action android:name="com.nsavage.stepcast.command.PREVIOUS" />
-                <action android:name="com.nsavage.stepcast.command.SEEK_BACK" />
-                <action android:name="com.nsavage.stepcast.command.SEEK_FORWARD" />
-                <action android:name="com.nsavage.stepcast.command.DONE" />
-                <action android:name="com.nsavage.stepcast.command.REFRESH" />
-                <action android:name="com.nsavage.stepcast.command.REFRESH_CATEGORY" />
-                <action android:name="com.nsavage.stepcast.command.START_SMART_PLAY" />
+                <action android:name="com.stepcast.app.command.PLAY" />
+                <action android:name="com.stepcast.app.command.PAUSE" />
+                <action android:name="com.stepcast.app.command.TOGGLE" />
+                <action android:name="com.stepcast.app.command.NEXT" />
+                <action android:name="com.stepcast.app.command.PREVIOUS" />
+                <action android:name="com.stepcast.app.command.SEEK_BACK" />
+                <action android:name="com.stepcast.app.command.SEEK_FORWARD" />
+                <action android:name="com.stepcast.app.command.DONE" />
+                <action android:name="com.stepcast.app.command.REFRESH" />
+                <action android:name="com.stepcast.app.command.REFRESH_CATEGORY" />
+                <action android:name="com.stepcast.app.command.START_SMART_PLAY" />
             </intent-filter>
         </receiver>
 

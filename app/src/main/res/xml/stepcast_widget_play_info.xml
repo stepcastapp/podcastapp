@@ -7,7 +7,7 @@
     android:updatePeriodMillis="0"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
-    android:configure="com.nsavage.stepcast.widget.WidgetConfigActivity"
+    android:configure="com.stepcast.app.widget.WidgetConfigActivity"
     android:widgetFeatures="reconfigurable|configuration_optional"
     android:description="@string/widget_play_description"
     android:initialLayout="@layout/glance_default_loading_layout" />

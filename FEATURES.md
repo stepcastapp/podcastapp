@@ -241,7 +241,7 @@ opacity/background setting (including fully transparent):
 
 ## Automation & integrations
 
-Broadcast commands under `com.nsavage.stepcast.command.*` (full table +
+Broadcast commands under `com.stepcast.app.command.*` (full table +
 Tasker/adb recipes in [AUTOMATION.md](AUTOMATION.md)):
 PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, SEEK_BACK, SEEK_FORWARD, DONE,
 REFRESH, REFRESH_CATEGORY, START_SMART_PLAY (actually starts playback;

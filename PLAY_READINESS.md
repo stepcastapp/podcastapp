@@ -72,7 +72,7 @@ alias.)
 
 ### 4. Play Console
 
-1. Create the app (podcast player → app id `com.nsavage.stepcast`).
+1. Create the app (podcast player → app id `com.stepcast.app`).
 2. Accept **Play App Signing** (default for new apps) — Google generates
    the app signing key; your keystore from step 1 is the upload key.
 3. Paste the privacy policy URL from step 3.

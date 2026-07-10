@@ -6,7 +6,7 @@ Room, and Media3. Inspired by the feature set of classic podcast apps
 
 **Branding:** the app is named **Stepcast**, with a rising-stairsteps mark
 (launcher icon + the in-app `StepMark` section glyph). Package/`applicationId`
-are `com.nsavage.stepcast`. The committed keystore predates the rename: its
+are `com.stepcast.app`. The committed keystore predates the rename: its
 *internal* alias/passwords are still the legacy `skipcast`/`skipcast123`
 values (see `app/build.gradle.kts`) — do not "fix" them, they're baked into
 the binary keystore and changing the references breaks signing.
@@ -135,7 +135,7 @@ buttons, child routes
 highlight their owning bottom-nav tab (Downloads/History/SmartPlay editor
 under Up Next, the rest under Library), pinnable SmartPlay
 launcher shortcuts, external automation broadcasts
-(`com.nsavage.stepcast.command.*` incl. REFRESH_CATEGORY and a
+(`com.stepcast.app.command.*` incl. REFRESH_CATEGORY and a
 START_SMART_PLAY that genuinely starts playback — full action list,
 extras, and Tasker/adb recipes in [AUTOMATION.md](AUTOMATION.md)).
 

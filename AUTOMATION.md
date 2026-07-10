@@ -7,9 +7,9 @@ and anything else that can send an Android broadcast or intent.
 
 Send an **explicit broadcast** to the command receiver:
 
-- **Package:** `com.nsavage.stepcast`
-- **Receiver:** `com.nsavage.stepcast.playback.CommandReceiver` (exported)
-- **Action prefix:** `com.nsavage.stepcast.command.`
+- **Package:** `com.stepcast.app`
+- **Receiver:** `com.stepcast.app.playback.CommandReceiver` (exported)
+- **Action prefix:** `com.stepcast.app.command.`
 
 | Action | Effect | Extras |
 |---|---|---|
@@ -28,15 +28,15 @@ Send an **explicit broadcast** to the command receiver:
 ### adb examples
 
 ```sh
-adb shell am broadcast -a com.nsavage.stepcast.command.TOGGLE \
-    -n com.nsavage.stepcast/.playback.CommandReceiver
+adb shell am broadcast -a com.stepcast.app.command.TOGGLE \
+    -n com.stepcast.app/.playback.CommandReceiver
 
-adb shell am broadcast -a com.nsavage.stepcast.command.START_SMART_PLAY \
-    -n com.nsavage.stepcast/.playback.CommandReceiver \
+adb shell am broadcast -a com.stepcast.app.command.START_SMART_PLAY \
+    -n com.stepcast.app/.playback.CommandReceiver \
     --es smartplay "News"
 
-adb shell am broadcast -a com.nsavage.stepcast.command.REFRESH_CATEGORY \
-    -n com.nsavage.stepcast/.playback.CommandReceiver \
+adb shell am broadcast -a com.stepcast.app.command.REFRESH_CATEGORY \
+    -n com.stepcast.app/.playback.CommandReceiver \
     --es category "News"
 ```
 
@@ -44,9 +44,9 @@ adb shell am broadcast -a com.nsavage.stepcast.command.REFRESH_CATEGORY \
 
 Use a "Send Intent / Broadcast" action with:
 
-- Action: `com.nsavage.stepcast.command.START_SMART_PLAY`
-- Package: `com.nsavage.stepcast`
-- Class: `com.nsavage.stepcast.playback.CommandReceiver`
+- Action: `com.stepcast.app.command.START_SMART_PLAY`
+- Package: `com.stepcast.app`
+- Class: `com.stepcast.app.playback.CommandReceiver`
 - Target: Broadcast Receiver
 - Extra: `smartplay: News` (only for START_SMART_PLAY)
 
@@ -72,7 +72,7 @@ Not intents you send, but automation-adjacent:
   and starts playback without opening the app.
 - **Launcher shortcuts** — long-press the app icon for the first four
   SmartPlays. (Internally these route
-  `com.nsavage.stepcast.shortcut.SMARTPLAY` through MainActivity — an
+  `com.stepcast.app.shortcut.SMARTPLAY` through MainActivity — an
   implementation detail, not a stable external API; automate via the
   broadcast above instead.)
 - **Player / bar / mini / play-button widgets** — transport controls
