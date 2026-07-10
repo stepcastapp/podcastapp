@@ -29,10 +29,18 @@ jobs:
         env:
           KS_B64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
           KS_PASS: ${{ secrets.PLAY_UPLOAD_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PLAY_UPLOAD_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.PLAY_UPLOAD_KEY_PASSWORD }}
         run: |
+          # All four are required: the build step passes each secret through
+          # as an env var, and an unset secret becomes an empty string (not
+          # null), so Gradle's `?: "stepcast-upload"` default never kicks in
+          # under CI — an empty alias/password would fail deep in signing.
           missing=""
           [ -z "$KS_B64" ] && missing="$missing PLAY_UPLOAD_KEYSTORE_BASE64"
           [ -z "$KS_PASS" ] && missing="$missing PLAY_UPLOAD_STORE_PASSWORD"
+          [ -z "$KEY_ALIAS" ] && missing="$missing PLAY_UPLOAD_KEY_ALIAS"
+          [ -z "$KEY_PASS" ] && missing="$missing PLAY_UPLOAD_KEY_PASSWORD"
           if [ -n "$missing" ]; then
             echo "::error::Missing repo secrets:$missing — see PLAY_READINESS.md for setup"
             exit 1
@@ -54,6 +62,27 @@ jobs:
         env:
           KS_B64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
         run: printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+
+      - name: Validate decoded keystore
+        env:
+          STORE_PASS: ${{ secrets.PLAY_UPLOAD_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PLAY_UPLOAD_KEY_ALIAS }}
+        run: |
+          # Fail fast with a readable message instead of a deep Gradle
+          # KeytoolException/EOFException if the base64 secret decoded to an
+          # empty/truncated file or the store password / alias don't match.
+          ks="$RUNNER_TEMP/upload.keystore"
+          if [ ! -s "$ks" ]; then
+            echo "::error::PLAY_UPLOAD_KEYSTORE_BASE64 decoded to an empty file — the secret is missing, truncated, or not valid base64. Re-encode the keystore and update the secret (PLAY_READINESS.md §2)."
+            exit 1
+          fi
+          if ! "$JAVA_HOME/bin/keytool" -list -keystore "$ks" \
+               -storepass "$STORE_PASS" -alias "$KEY_ALIAS" >/dev/null 2>keytool.err; then
+            echo "::error::Upload keystore is unreadable. Either PLAY_UPLOAD_KEYSTORE_BASE64 didn't decode to a valid keystore, or PLAY_UPLOAD_STORE_PASSWORD / PLAY_UPLOAD_KEY_ALIAS don't match it (PLAY_READINESS.md §2)."
+            sed 's/^/keytool: /' keytool.err || true
+            exit 1
+          fi
+          echo "Upload keystore OK: alias '$KEY_ALIAS' present and readable."
 
       - name: Unit tests
         run: gradle testDebugUnitTest --stacktrace

@@ -28,6 +28,13 @@ generated for you) and the Play Console work itself.
 
 ### 1. Generate the upload key — on your own machine, never in the repo
 
+Termux (Android — `pkg install openjdk-17` provides keytool):
+
+```bash
+keytool -genkeypair -v -keystore stepcast-upload.keystore \
+  -alias stepcast-upload -keyalg RSA -keysize 4096 -validity 10000
+```
+
 Windows (Corretto 21's keytool is on the dev machine):
 
 ```powershell
@@ -53,7 +60,26 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `PLAY_UPLOAD_KEY_ALIAS` | `stepcast-upload` |
 | `PLAY_UPLOAD_KEY_PASSWORD` | the key password (same as store if you reused it) |
 
-To get the base64 on Windows (copies straight to clipboard):
+To get the base64 — **encode with no line wrapping** and copy the whole
+string (a truncated paste is the usual cause of the CI signing step
+failing with a `KeytoolException`/`EOFException`).
+
+Termux (Android):
+
+```bash
+# -w0 = single unwrapped line; copies to the Android clipboard
+base64 -w0 stepcast-upload.keystore | termux-clipboard-set
+# or write it to a file to paste from: base64 -w0 stepcast-upload.keystore > ks.b64
+```
+
+Verify the keystore is valid before you upload the secret (should list the
+`stepcast-upload` entry after you enter the store password):
+
+```bash
+keytool -list -keystore stepcast-upload.keystore
+```
+
+Windows (copies straight to clipboard):
 
 ```powershell
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("stepcast-upload.keystore")) | Set-Clipboard
