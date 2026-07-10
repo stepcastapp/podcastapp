@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings/theme/stats survive backup: legacy sharedprefs plus the
+     DataStore files that replaced them (files/datastore/). Include-only
+     means everything else (episode database, downloaded audio) stays out —
+     refetchable, and the DB can exceed the cloud quota, which would
+     silently drop EVERYTHING otherwise. -->
+<full-backup-content>
+    <include domain="sharedpref" path="." />
+    <include domain="file" path="datastore/" />
+</full-backup-content>

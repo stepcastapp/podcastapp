@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Stepcast mark: rising stairsteps (skip over, step through). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF4AE3FF"
+        android:pathData="M30,78 L30,63 L45,63 L45,48 L60,48 L60,33 L78,33 L78,78 Z" />
+</vector>

@@ -1,0 +1,17 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# signing — the committed stepcast-debug.keystore is a public
+# convenience key (sideload builds only); the Play upload key and
+# bundles must never land in the repo
+stepcast-upload.keystore
+*.jks
+*.aab
+*.apk
