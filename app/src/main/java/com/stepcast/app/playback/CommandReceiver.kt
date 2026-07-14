@@ -7,7 +7,9 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
 import com.stepcast.app.StepcastApplication
 import com.stepcast.app.sync.RefreshWorker
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * External automation surface (Tasker, Bixby Routines, adb, anything that
@@ -92,33 +95,43 @@ class CommandReceiver : BroadcastReceiver() {
                     SessionCommand(PlaybackService.ACTION_REFRESH_NOTIF_BUTTONS, Bundle.EMPTY),
                     Bundle.EMPTY
                 )
-                ACTION_PLAY -> controller.play()
-                ACTION_PAUSE -> controller.pause()
-                ACTION_TOGGLE ->
-                    if (controller.isPlaying) controller.pause() else controller.play()
-                ACTION_NEXT -> controller.seekToNextMediaItem()
-                ACTION_PREVIOUS -> controller.seekToPreviousMediaItem()
-                ACTION_SEEK_BACK -> controller.seekBack()
-                ACTION_SEEK_FORWARD -> controller.seekForward()
+                ACTION_PLAY -> { controller.play(); null }
+                ACTION_PAUSE -> { controller.pause(); null }
+                ACTION_TOGGLE -> {
+                    if (controller.isPlaying) controller.pause() else controller.play(); null
+                }
+                ACTION_NEXT -> { controller.seekToNextMediaItem(); null }
+                ACTION_PREVIOUS -> { controller.seekToPreviousMediaItem(); null }
+                ACTION_SEEK_BACK -> { controller.seekBack(); null }
+                ACTION_SEEK_FORWARD -> { controller.seekForward(); null }
                 ACTION_DONE -> controller.sendCustomCommand(
                     SessionCommand(PlaybackService.ACTION_DONE_DELETE, Bundle.EMPTY),
                     Bundle.EMPTY
                 )
+                else -> null
             }
         }
     }
 
     private suspend fun withController(
         context: Context,
-        command: (MediaController) -> Unit
+        command: (MediaController) -> ListenableFuture<SessionResult>?
     ) {
         val token = SessionToken(
             context, ComponentName(context, PlaybackService::class.java)
         )
         val controller = MediaController.Builder(context, token).buildAsync().await()
         try {
-            command(controller)
-            delay(300) // let the command dispatch before releasing
+            val future = command(controller)
+            if (future != null) {
+                // wait for the service to finish the command (e.g. SmartPlay:
+                // queue fill + play) before releasing the controller — releasing
+                // the last client mid-start can let the OS destroy the service
+                // and playback never begins. Bounded so a broadcast can't hang.
+                withTimeoutOrNull(8_000) { future.await() }
+            } else {
+                delay(300) // transport-only command; let it dispatch
+            }
         } finally {
             controller.release()
         }

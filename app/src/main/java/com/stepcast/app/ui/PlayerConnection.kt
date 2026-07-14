@@ -243,7 +243,16 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
      */
     fun play(episode: Episode, podcast: Podcast?, fromStationId: Long = 0L) {
         scope.launch {
-            val c = controller ?: return@launch
+            // A tap immediately after cold launch can arrive before the
+            // controller finishes connecting (set async in init). Rather than
+            // silently drop the play — leaving a just-filled SmartPlay queue
+            // with nothing playing — wait briefly for the connection.
+            var c = controller
+            var waitedMs = 0
+            while (c == null && waitedMs < 2_000) {
+                delay(50); waitedMs += 50; c = controller
+            }
+            if (c == null) return@launch
             if (com.stepcast.app.data.AppSettings.activeStationId != fromStationId) {
                 com.stepcast.app.data.AppSettings
                     .setActiveStationId(appContext, fromStationId)

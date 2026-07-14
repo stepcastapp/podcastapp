@@ -413,8 +413,13 @@ class PlaybackService : MediaLibraryService() {
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
             if (customCommand.customAction == ACTION_START_SMARTPLAY) {
-                args.getString(KEY_SMARTPLAY_NAME)?.let { startSmartPlayByName(it) }
-                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                val name = args.getString(KEY_SMARTPLAY_NAME)
+                    ?: return Futures.immediateFuture(
+                        SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE)
+                    )
+                // hand back the in-flight future so the caller stays connected
+                // until playback actually begins (see startSmartPlayByName)
+                return startSmartPlayByName(name)
             }
             if (customCommand.customAction == ACTION_REFRESH_NOTIF_BUTTONS) {
                 // re-resolve per-show values too (ad jump edited mid-episode)
@@ -1026,8 +1031,13 @@ class PlaybackService : MediaLibraryService() {
      * the session player directly means playback genuinely starts even
      * when the caller is a broadcast that disconnects immediately.
      */
-    private fun startSmartPlayByName(name: String) {
-        serviceScope.launch {
+    // Returns a future that completes only AFTER the queue is filled and
+    // play() has run. The caller (CommandReceiver's throwaway controller) awaits
+    // it, so on a cold start the service keeps a bound client for the whole
+    // start — releasing it early (the old fixed 300ms grace) could let the OS
+    // destroy the service mid-start, filling the queue but never starting play.
+    private fun startSmartPlayByName(name: String): ListenableFuture<SessionResult> =
+        serviceScope.future {
             var started: com.stepcast.app.data.SmartPlay? = null
             val episodes = withContext(Dispatchers.IO) {
                 val smartPlay = app.repository.smartPlayList()
@@ -1040,19 +1050,22 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
-            if (episodes.isEmpty()) return@launch
+            if (episodes.isEmpty()) {
+                return@future SessionResult(SessionResult.RESULT_SUCCESS)
+            }
             AppSettings.setActiveStationId(
                 this@PlaybackService,
                 started?.takeIf { it.continuous }?.id ?: 0L
             )
-            val player = mediaSession?.player ?: return@launch
+            val player = mediaSession?.player
+                ?: return@future SessionResult(SessionResult.RESULT_ERROR_INVALID_STATE)
             player.setMediaItems(
                 episodes.map { episodeToItem(it) }, 0, C.TIME_UNSET
             )
             player.prepare()
             player.play()
+            SessionResult(SessionResult.RESULT_SUCCESS)
         }
-    }
 
     companion object {
         private const val TICK_MS = 1_000L
