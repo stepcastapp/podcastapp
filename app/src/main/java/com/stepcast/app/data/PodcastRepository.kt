@@ -44,7 +44,10 @@ class PodcastRepository(
     /** Subscribes to a feed URL (or refreshes if already subscribed). Returns the podcast id. */
     suspend fun subscribe(
         feedUrl: String,
-        prefetched: ParsedFeed? = null
+        prefetched: ParsedFeed? = null,
+        // Bulk imports (OPML) pass true so the whole back-catalog isn't
+        // auto-downloaded at once; only later-arriving episodes will be.
+        suppressBacklogAutoDownload: Boolean = false
     ): Long = withContext(Dispatchers.IO) {
         // normalized match so an equivalent URL refreshes instead of duplicating
         val existingId = podcastIdForFeed(feedUrl)
@@ -65,7 +68,11 @@ class PodcastRepository(
             )
         )
         insertEpisodes(id, feed)
-        autoManageDownloads(id)
+        if (suppressBacklogAutoDownload) {
+            db.episodeDao().setAutoDownloadEligibleForPodcast(id, false)
+        } else {
+            autoManageDownloads(id)
+        }
         id
     }
 
@@ -75,6 +82,11 @@ class PodcastRepository(
         if (podcast.localFolderUri != null) {
             return@withContext scanLocalFolder(podcast)
         }
+        // A never-refreshed feed is a freshly-imported stub (BeyondPod import
+        // creates stubs with lastRefreshed = 0). Treat its whole back-catalog
+        // as import backlog: suppress auto-download so the import doesn't
+        // mass-download history — later refreshes still auto-download new ones.
+        val isInitialImport = podcast.lastRefreshed == 0L
         val feed = fetchFeed(podcast.feedUrl)
         val newIds = insertEpisodesReturningIds(podcastId, feed)
         db.podcastDao().update(
@@ -91,7 +103,11 @@ class PodcastRepository(
         if (podcast.episodeCap > 0) {
             db.episodeDao().pruneBeyondCap(podcastId, podcast.episodeCap)
         }
-        autoManageDownloads(podcastId)
+        if (isInitialImport) {
+            db.episodeDao().setAutoDownloadEligibleForPodcast(podcastId, false)
+        } else {
+            autoManageDownloads(podcastId)
+        }
         newIds.size
     }
 
@@ -115,6 +131,9 @@ class PodcastRepository(
         if (podcast.keepDownloads > 0) {
             episodes.asSequence()
                 .filter { !it.played }
+                // import backlog stays out of auto-download entirely (before
+                // take(), so it never consumes a "newest N" slot)
+                .filter { it.autoDownloadEligible }
                 .filter { cutoffMs == 0L || it.pubDateMs >= cutoffMs }
                 .take(podcast.keepDownloads)
                 .filter { it.downloadStatus == Episode.DOWNLOAD_NONE }
@@ -219,7 +238,11 @@ class PodcastRepository(
         feedUrls
             .map { url ->
                 async {
-                    gate.withPermit { runCatching { subscribe(url) }.isSuccess }
+                    gate.withPermit {
+                        runCatching {
+                            subscribe(url, suppressBacklogAutoDownload = true)
+                        }.isSuccess
+                    }
                 }
             }
             .awaitAll()

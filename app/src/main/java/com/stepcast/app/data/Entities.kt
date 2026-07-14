@@ -86,7 +86,14 @@ data class Episode(
     val transcriptUrl: String? = null,
     val transcriptType: String? = null,
     /** Swiped out of the New-episodes inbox; playing/marking played also clears it. */
-    val inboxDismissed: Boolean = false
+    val inboxDismissed: Boolean = false,
+    /**
+     * Whether auto-download rules may fetch this episode. Set false for the
+     * back-catalog inserted during a bulk OPML/BeyondPod import (and the first
+     * refresh of an imported stub) so a big import doesn't mass-download its
+     * history; episodes that arrive on later refreshes default to true.
+     */
+    val autoDownloadEligible: Boolean = true
 ) {
     val progressFraction: Float
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f

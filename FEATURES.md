@@ -259,6 +259,11 @@ podcast-scheme URL handling into Discover.
   category it belongs to).
 - **BeyondPod .bpbak import**: feeds, categories, per-category refresh
   schedules, SmartPlays, episode caps.
+- **Bulk imports don't mass-download.** A newly imported feed's existing
+  back-catalog is marked ineligible for auto-download, so an OPML/BeyondPod
+  import doesn't kick off hundreds of downloads at once; episodes that
+  arrive on later refreshes auto-download normally. (A single subscribe
+  from Discover is unchanged — it still fetches the newest episodes.)
 
 ## Stats & history
 

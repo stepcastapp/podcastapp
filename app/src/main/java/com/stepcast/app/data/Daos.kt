@@ -214,6 +214,10 @@ interface EpisodeDao {
     @Query("UPDATE episodes SET downloadAttempts = 0 WHERE id = :id")
     suspend fun resetDownloadAttempts(id: Long)
 
+    /** Bulk-import backlog suppression: mark a podcast's current episodes (in)eligible for auto-download. */
+    @Query("UPDATE episodes SET autoDownloadEligible = :eligible WHERE podcastId = :podcastId")
+    suspend fun setAutoDownloadEligibleForPodcast(podcastId: Long, eligible: Boolean)
+
     /** Dismiss: leave the pane AND stop auto-download from re-adding it. */
     @Query(
         "UPDATE episodes SET downloadStatus = 0, downloadProgress = 0, " +

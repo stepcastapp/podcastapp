@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SmartPlay::class, SmartPlayEntry::class, CategoryMeta::class,
         ListenStat::class, PodcastCategory::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class StepcastDatabase : RoomDatabase() {
@@ -131,6 +131,17 @@ abstract class StepcastDatabase : RoomDatabase() {
             }
         }
 
+        // Existing episodes default to eligible (1) so current subscriptions
+        // keep auto-downloading; only future bulk imports mark their backlog 0.
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE episodes ADD COLUMN autoDownloadEligible " +
+                        "INTEGER NOT NULL DEFAULT 1"
+                )
+            }
+        }
+
         fun get(context: Context): StepcastDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -141,7 +152,7 @@ abstract class StepcastDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
-                        MIGRATION_15_16, MIGRATION_16_17
+                        MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18
                     )
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }
