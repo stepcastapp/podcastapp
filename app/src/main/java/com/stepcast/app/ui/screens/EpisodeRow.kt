@@ -305,6 +305,8 @@ private fun EpisodeRowContent(
 ) {
     var rowMenuOpen by remember { mutableStateOf(false) }
     var detailsOpen by remember { mutableStateOf(false) }
+    // for the per-episode "download over mobile data" override below
+    val context = androidx.compose.ui.platform.LocalContext.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
