@@ -162,7 +162,9 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   Downloading (progress bars), Waiting (honest reasons — "Waiting for
   Wi-Fi" vs "Waiting for a download slot"), Failed (attempt counts).
 - **Wi-Fi-only gate** with a one-shot **"Use mobile data (N)"** override
-  that leaves the global setting alone.
+  that leaves the global setting alone. When Wi-Fi-only is on, an episode's
+  overflow menu also offers a per-episode **"Download now (mobile data)"**
+  action for a single download or retry.
 - Per-row and bulk retry / dismiss / cancel; **auto-retry gives up after
   3 failed attempts** so dead enclosures stop reappearing; manual retry
   always allowed; orphaned in-flight downloads recover on app start.

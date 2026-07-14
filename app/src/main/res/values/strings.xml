@@ -289,6 +289,7 @@
     <string name="mark_played">Mark played</string>
     <string name="retry_download">Retry download</string>
     <string name="download">Download</string>
+    <string name="download_now_mobile_data">Download now (mobile data)</string>
     <string name="no_show_notes">(no show notes)</string>
     <string name="downloads_in_progress_cd">%1$d downloads in progress</string>
     <string name="move_earlier_in_queue">Move earlier in queue</string>

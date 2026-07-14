@@ -488,22 +488,40 @@ private fun EpisodeRowContent(
                         text = { Text(stringResource(R.string.delete_download)) },
                         onClick = { rowMenuOpen = false; onDeleteDownload() }
                     )
-                    else -> DropdownMenuItem(
-                        text = {
-                            Text(
-                                stringResource(
-                                    if (episode.downloadStatus ==
-                                        Episode.DOWNLOAD_FAILED
-                                    ) {
-                                        R.string.retry_download
-                                    } else {
-                                        R.string.download
-                                    }
+                    else -> {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(
+                                        if (episode.downloadStatus ==
+                                            Episode.DOWNLOAD_FAILED
+                                        ) {
+                                            R.string.retry_download
+                                        } else {
+                                            R.string.download
+                                        }
+                                    )
                                 )
+                            },
+                            onClick = { rowMenuOpen = false; onDownload() }
+                        )
+                        // With Wi-Fi-only on, offer a one-shot override for THIS
+                        // episode so a single download (or retry) can go over
+                        // mobile data without touching the global setting.
+                        if (AppSettings.wifiOnlyDownloads) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(stringResource(R.string.download_now_mobile_data))
+                                },
+                                onClick = {
+                                    rowMenuOpen = false
+                                    DownloadWorker.start(
+                                        context, episode.id, allowMetered = true
+                                    )
+                                }
                             )
-                        },
-                        onClick = { rowMenuOpen = false; onDownload() }
-                    )
+                        }
+                    }
                 }
             }
         }
