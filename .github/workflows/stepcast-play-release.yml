@@ -8,12 +8,8 @@ name: Stepcast Play Release
 on:
   workflow_dispatch:
     inputs:
-      versionCode:
-        description: 'versionCode for this upload (integer, must exceed the last Play upload)'
-        required: true
-        type: string
       versionName:
-        description: 'versionName shown to users, e.g. 0.3.0'
+        description: 'versionName shown to users, e.g. 0.3.0 (versionCode is auto-derived from the commit count)'
         required: true
         type: string
 
@@ -47,6 +43,19 @@ jobs:
           fi
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the commit count is accurate
+
+      - name: Compute versionCode from commit count
+        id: version
+        run: |
+          # Monotonic, unique, zero-bookkeeping: every commit on the branch
+          # bumps this, so you never track version codes by hand. Needs
+          # fetch-depth: 0 above (a shallow clone would report 1). Play only
+          # requires versionCode to increase, not be contiguous.
+          code="$(git rev-list --count HEAD)"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "::notice::versionCode = $code, versionName = ${{ inputs.versionName }}"
 
       - uses: actions/setup-java@v4
         with:
@@ -95,7 +104,7 @@ jobs:
           STEPCAST_UPLOAD_KEY_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEY_PASSWORD }}
         run: |
           gradle bundleRelease assembleRelease --stacktrace \
-            -PstepcastVersionCode='${{ inputs.versionCode }}' \
+            -PstepcastVersionCode='${{ steps.version.outputs.code }}' \
             -PstepcastVersionName='${{ inputs.versionName }}'
 
       - name: Remove keystore from runner
@@ -105,7 +114,7 @@ jobs:
       - name: Upload AAB (for Play Console)
         uses: actions/upload-artifact@v4
         with:
-          name: stepcast-play-aab-${{ inputs.versionCode }}
+          name: stepcast-play-aab-${{ steps.version.outputs.code }}
           path: app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 14
@@ -115,7 +124,7 @@ jobs:
       - name: Upload upload-key-signed APK (sanity install)
         uses: actions/upload-artifact@v4
         with:
-          name: stepcast-play-apk-${{ inputs.versionCode }}
+          name: stepcast-play-apk-${{ steps.version.outputs.code }}
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14

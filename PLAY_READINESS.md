@@ -111,11 +111,14 @@ alias.)
 
 ## Cutting a Play build
 
-Actions → **Stepcast Play Release** → Run workflow → enter `versionCode`
-(integer, strictly greater than the last Play upload — start at `3`) and
-`versionName` (e.g. `0.3.0`). Download the `stepcast-play-aab-*` artifact
-and upload the `.aab` in Play Console. The matching
-`stepcast-play-apk-*` artifact is signed with the same key for an
+Actions → **Stepcast Play Release** → Run workflow → enter only
+`versionName` (e.g. `0.3.0`). **versionCode is derived automatically** from
+the commit count (`git rev-list --count HEAD`), so it's always unique and
+increasing — no manual tracking. It's printed as a run notice and shown in
+the artifact name. Play only requires versionCode to increase, not be
+contiguous, so occasional jumps are fine. Download the
+`stepcast-play-aab-*` artifact and upload the `.aab` in Play Console. The
+matching `stepcast-play-apk-*` artifact is signed with the same key for an
 on-device sanity install first.
 
 **Sideload → Play migration on your own phone:** the Play build is signed
