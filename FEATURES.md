@@ -196,6 +196,11 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   cadence** ("every N hours") with an optional **reference time-of-day
   anchor** ("every 6h from 5:00" → 5:00, 11:00, 17:00, 23:00); missed
   slots catch up. Multi-category shows refresh when ANY membership is due.
+- **Schedule overview** (Settings → Feeds & downloads → Schedule): a
+  read-first screen listing every category's refresh cadence (+ member
+  count) and every show's download rules (keep count, max age, cap,
+  auto-queue) in one place, with the global defaults shown first. Tapping
+  a row jumps to the category or podcast screen to edit it.
 - Refresh-all button (Library) and per-category/per-show refresh with
   new-episode counts in snackbars; per-show refresh also runs the
   download rules.

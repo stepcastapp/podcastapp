@@ -290,6 +290,20 @@
     <string name="retry_download">Retry download</string>
     <string name="download">Download</string>
     <string name="download_now_mobile_data">Download now (mobile data)</string>
+    <string name="schedule">Schedule</string>
+    <string name="schedule_subtitle">Refresh cadence per category and download rules per show. Tap a row to edit.</string>
+    <string name="schedule_settings_hint">Refresh cadence and download rules at a glance</string>
+    <string name="schedule_refresh_cadence">Refresh cadence</string>
+    <string name="schedule_downloads">Downloads</string>
+    <string name="schedule_default">Default</string>
+    <string name="schedule_every_hours">Every %1$dh</string>
+    <string name="schedule_app_default_hours">App default (%1$dh)</string>
+    <string name="schedule_every_hours_at">Every %1$dh at %2$s</string>
+    <string name="schedule_keep_n">Keep %1$d</string>
+    <string name="schedule_autodownload_off">Auto-download off</string>
+    <string name="schedule_max_age_d">%1$dd max age</string>
+    <string name="schedule_cap_n">Cap %1$d</string>
+    <string name="schedule_auto_queue">Auto-queue</string>
     <string name="no_show_notes">(no show notes)</string>
     <string name="downloads_in_progress_cd">%1$d downloads in progress</string>
     <string name="move_earlier_in_queue">Move earlier in queue</string>
@@ -395,6 +409,10 @@
     <plurals name="episodes_count">
         <item quantity="one">%1$d episode</item>
         <item quantity="other">%1$d episodes</item>
+    </plurals>
+    <plurals name="schedule_shows">
+        <item quantity="one">%1$d show</item>
+        <item quantity="other">%1$d shows</item>
     </plurals>
     <plurals name="podcasts_count">
         <item quantity="one">%1$d podcast</item>

@@ -82,7 +82,10 @@ import androidx.compose.ui.res.pluralStringResource
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SettingsScreen(repository: PodcastRepository) {
+fun SettingsScreen(
+    repository: PodcastRepository,
+    onOpenSchedule: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
@@ -642,6 +645,11 @@ fun SettingsScreen(repository: PodcastRepository) {
             label = stringResource(R.string.storage_2),
             hint = stringResource(R.string.downloaded_episodes_by_podcast_with_one_ta),
             onClick = { storageOpen = true }
+        )
+        ActionRow(
+            label = stringResource(R.string.schedule),
+            hint = stringResource(R.string.schedule_settings_hint),
+            onClick = onOpenSchedule
         )
         }
 

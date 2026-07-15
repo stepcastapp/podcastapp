@@ -283,7 +283,14 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                     playerState = playerState
                 )
             }
-            composable("settings") { SettingsScreen(repository = app.repository) }
+            composable("settings") {
+                SettingsScreen(
+                    repository = app.repository,
+                    onOpenSchedule = {
+                        navController.navigate("schedule") { launchSingleTop = true }
+                    }
+                )
+            }
             composable("librarysearch") {
                 com.stepcast.app.ui.screens.LibrarySearchScreen(
                     repository = app.repository,
@@ -333,6 +340,15 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
             }
             composable("history") {
                 HistoryScreen(repository = app.repository, player = player)
+            }
+            composable("schedule") {
+                com.stepcast.app.ui.screens.ScheduleScreen(
+                    repository = app.repository,
+                    onOpenCategory = {
+                        navController.navigate("category/${android.net.Uri.encode(it)}")
+                    },
+                    onOpenPodcast = { navController.navigate("podcast/$it") }
+                )
             }
             composable(
                 route = "smartplay/{smartPlayId}",
