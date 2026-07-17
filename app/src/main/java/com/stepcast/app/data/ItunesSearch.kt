@@ -70,7 +70,9 @@ class ItunesSearch(private val http: OkHttpClient = OkHttpClient()) {
                         )
                     }
                 }
-            ids.mapNotNull { byId[it] }
+            // distinct Apple listings can share one feed URL (Spreaker et al.
+            // relist shows) — feedUrl keys the result rows, so dupes crash
+            ids.mapNotNull { byId[it] }.distinctBy { it.feedUrl }
         }
 
     suspend fun search(term: String, limit: Int = 30): List<SearchResult> =
@@ -102,7 +104,7 @@ class ItunesSearch(private val http: OkHttpClient = OkHttpClient()) {
                             )
                         )
                     }
-                }
+                }.distinctBy { it.feedUrl } // same-feed relistings collapse
             }
         }
 }
