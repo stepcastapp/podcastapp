@@ -49,6 +49,17 @@
             </intent-filter>
         </activity>
 
+        <!-- invisible relay for widget playback taps: an activity start is the
+             only widget-tap path that reliably lets the service go foreground
+             on Android 12+ (launcher PendingIntents carry no FGS allowlist) -->
+        <activity
+            android:name=".playback.PlaybackTrampolineActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Stepcast.Trampoline" />
+
         <!-- per-widget settings (opacity), reachable via widget reconfigure -->
         <activity
             android:name=".widget.WidgetConfigActivity"

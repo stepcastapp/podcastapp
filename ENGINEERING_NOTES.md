@@ -24,6 +24,16 @@ build or one confused on-device session.
   builds only, debug fine. Keep rule lives in `proguard-rules.pro`.
 - **Surface widget errors.** A dead button is undebuggable from a home
   screen; failed widget commands now raise a Toast with the exception.
+- **Launcher PendingIntents grant no FGS allowlist.** Notification actions
+  come from SystemUI (privileged sender -> temporary allowlist); widget
+  taps come from the LAUNCHER, a normal app, so a play issued from a
+  Glance callback/broadcast cannot promote the service to foreground on
+  Android 12+ while the app is backgrounded. Media3 swallows the denial
+  and PAUSES - the tap looks dead and the primed queue pops off whenever
+  the app next reaches foreground. Playback-starting widget buttons must
+  route through `PlaybackTrampolineActivity` (activity starts from
+  widgets are always allowed; while it's resumed the promotion succeeds).
+  Pause/seek/done can stay on the broadcast path.
 - **Responsive shrinking.** `SizeMode.Responsive` breakpoints keep the
   play/pause button alive as the bar widget shrinks (text drops <200dp,
   art drops <110dp); `minResizeWidth=40dp` allows 1-cell. Launchers cache

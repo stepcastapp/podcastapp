@@ -6,6 +6,10 @@
         <item name="android:windowBackground">#FF141218</item>
     </style>
 
+    <!-- Fully transparent, zero-UI window for PlaybackTrampolineActivity:
+         it must not flash any frame while it relays a widget command. -->
+    <style name="Theme.Stepcast.Trampoline" parent="android:Theme.Translucent.NoTitleBar" />
+
     <!-- SplashScreen-API entry theme: ink field, green stairstep mark. -->
     <style name="Theme.Stepcast.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#141218</item>

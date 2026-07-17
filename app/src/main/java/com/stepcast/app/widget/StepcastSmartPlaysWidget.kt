@@ -93,8 +93,26 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
                                 .clickable(
-                                    actionRunCallback<StartSmartPlayAction>(
-                                        actionParametersOf(SMARTPLAY_NAME_KEY to name)
+                                    // an activity start (not a broadcast) so the
+                                    // service may go foreground from a background
+                                    // tap — see PlaybackTrampolineActivity. The
+                                    // unique data URI keeps each name's
+                                    // PendingIntent distinct (equal-extras
+                                    // intents would collapse to one).
+                                    androidx.glance.appwidget.action.actionStartActivity(
+                                        Intent(
+                                            context,
+                                            com.stepcast.app.playback
+                                                .PlaybackTrampolineActivity::class.java
+                                        )
+                                            .setData(
+                                                android.net.Uri.parse(
+                                                    "stepcast://smartplay/" +
+                                                        android.net.Uri.encode(name)
+                                                )
+                                            )
+                                            .putExtra("smartplay", name)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     )
                                 )
                         ) {

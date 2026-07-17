@@ -201,7 +201,7 @@ internal fun PlayPauseButton(isPlaying: Boolean, opacity: Int, sizeDp: Int = 44)
             contentAlignment = Alignment.Center,
             modifier = GlanceModifier
                 .size(sizeDp.dp)
-                .clickable(actionRunCallback<PlayPauseAction>())
+                .clickable(playPauseTrampolineAction())
         ) {
             Image(
                 provider = ImageProvider(icon),
@@ -214,7 +214,7 @@ internal fun PlayPauseButton(isPlaying: Boolean, opacity: Int, sizeDp: Int = 44)
         SquareIconButton(
             imageProvider = ImageProvider(icon),
             contentDescription = label,
-            onClick = actionRunCallback<PlayPauseAction>(),
+            onClick = playPauseTrampolineAction(),
             modifier = GlanceModifier.size(sizeDp.dp)
         )
     }
@@ -509,7 +509,7 @@ class StepcastMiniWidget : GlanceAppWidget() {
                                 }
                             ),
                             contentDescription = if (state.isPlaying) "Pause" else "Play",
-                            onClick = actionRunCallback<PlayPauseAction>(),
+                            onClick = playPauseTrampolineAction(),
                             modifier = GlanceModifier.size(36.dp)
                         )
                     }
@@ -538,7 +538,7 @@ class StepcastPlayWidget : GlanceAppWidget() {
                         .fillMaxSize()
                         .background(widgetBackgroundColor(opacity))
                         .cornerRadius(24.dp)
-                        .clickable(actionRunCallback<PlayPauseAction>())
+                        .clickable(playPauseTrampolineAction())
                 ) {
                     Image(
                         provider = ImageProvider(
@@ -588,6 +588,30 @@ private fun EmptyWidget(opacity: Int) {
 
 // ---- actions ---------------------------------------------------------------
 
+/**
+ * Play/pause goes through PlaybackTrampolineActivity (an activity start, not
+ * a background broadcast): launcher widget PendingIntents carry no
+ * foreground-service allowlist, so a play issued from a background callback
+ * can't promote the service on Android 12+ and the tap silently dies. The
+ * trampoline is foreground for the moment the command lands. Pause-only
+ * commands (seek, done) stay on the broadcast path — they don't need FGS.
+ */
+@Composable
+internal fun playPauseTrampolineAction(): androidx.glance.action.Action {
+    val context = androidx.glance.LocalContext.current
+    return androidx.glance.appwidget.action.actionStartActivity(
+        android.content.Intent(
+            context,
+            com.stepcast.app.playback.PlaybackTrampolineActivity::class.java
+        )
+            .setData(android.net.Uri.parse("stepcast://widget/toggle"))
+            .putExtra("command", "TOGGLE")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    )
+}
+
+// Kept for reference/rollback; no longer wired to any button (see
+// playPauseTrampolineAction above for why).
 class PlayPauseAction : ActionCallback {
     override suspend fun onAction(
         context: Context,
