@@ -94,8 +94,16 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        extractFeedUrl(intent)?.let { sharedFeedUrl.value = it }
-        handleSmartPlayShortcut(intent)
+        // Only act on the LAUNCH intent for a genuinely fresh start. On
+        // recreation — config change, or a process-death restore from Recents —
+        // the OS re-supplies the ORIGINAL launch intent with a non-null
+        // savedInstanceState. Handling it again would replay a SmartPlay
+        // shortcut (or re-open a shared feed) the user triggered long ago,
+        // starting playback out of nowhere. Fresh taps arrive via onNewIntent.
+        if (savedInstanceState == null) {
+            extractFeedUrl(intent)?.let { sharedFeedUrl.value = it }
+            handleSmartPlayShortcut(intent)
+        }
         com.stepcast.app.ui.theme.ThemePrefs.init(this)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
