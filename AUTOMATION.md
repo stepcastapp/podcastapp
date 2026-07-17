@@ -71,9 +71,9 @@ Not intents you send, but automation-adjacent:
 - **SmartPlays widget** — lists your SmartPlays; one tap fills the queue
   and starts playback without opening the app.
 - **Launcher shortcuts** — long-press the app icon for the first four
-  SmartPlays. (Internally these route
-  `com.stepcast.app.shortcut.SMARTPLAY` through MainActivity — an
-  implementation detail, not a stable external API; automate via the
-  broadcast above instead.)
+  SmartPlays; a tap starts playback without opening the app. (Internally
+  these route `com.stepcast.app.shortcut.SMARTPLAY` through the invisible
+  PlaybackTrampolineActivity — an implementation detail, not a stable
+  external API; automate via the broadcast above instead.)
 - **Player / bar / mini / play-button widgets** — transport controls
   backed by the same command handling as the media notification.

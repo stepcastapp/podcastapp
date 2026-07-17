@@ -5,7 +5,7 @@ import android.content.Intent
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
-import com.stepcast.app.ui.MainActivity
+import com.stepcast.app.playback.PlaybackTrampolineActivity
 
 /**
  * Publishes each SmartPlay as a launcher shortcut (long-press the app icon,
@@ -29,13 +29,22 @@ object SmartPlayShortcuts {
                         IconCompat.createWithResource(context, R.mipmap.ic_launcher)
                     )
                     .setIntent(
-                        Intent(context, MainActivity::class.java)
+                        // the invisible trampoline, NOT MainActivity: a
+                        // shortcut tap should start playback without opening
+                        // the app (and never leaves a stale launch intent for
+                        // a later recreation to replay). Re-publishing under
+                        // the same ids updates already-pinned shortcuts;
+                        // MainActivity keeps its legacy ACTION_START handler
+                        // for any pin that hasn't refreshed yet.
+                        Intent(context, PlaybackTrampolineActivity::class.java)
                             .setAction(ACTION_START)
-                            .putExtra("smartplay", name)
-                            .addFlags(
-                                Intent.FLAG_ACTIVITY_NEW_TASK or
-                                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            .setData(
+                                android.net.Uri.parse(
+                                    "stepcast://smartplay/" + android.net.Uri.encode(name)
+                                )
                             )
+                            .putExtra("smartplay", name)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
                     .build()
             }

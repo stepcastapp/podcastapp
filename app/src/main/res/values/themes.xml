@@ -6,9 +6,21 @@
         <item name="android:windowBackground">#FF141218</item>
     </style>
 
-    <!-- Fully transparent, zero-UI window for PlaybackTrampolineActivity:
-         it must not flash any frame while it relays a widget command. -->
-    <style name="Theme.Stepcast.Trampoline" parent="android:Theme.Translucent.NoTitleBar" />
+    <!-- Zero-UI window for PlaybackTrampolineActivity. Floating + transparent
+         + no animation + no starting window: a full-screen translucent
+         activity going edge-to-edge drew the system's status-bar contrast
+         scrim for its whole hold (a visible gray flash on every widget tap),
+         and a new-task launch played the app-open animation/splash. A
+         floating empty window owns no system bars, shows no frame, and
+         doesn't intercept the launcher's touches. -->
+    <style name="Theme.Stepcast.Trampoline" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowCloseOnTouchOutside">false</item>
+    </style>
 
     <!-- SplashScreen-API entry theme: ink field, green stairstep mark. -->
     <style name="Theme.Stepcast.Splash" parent="Theme.SplashScreen">

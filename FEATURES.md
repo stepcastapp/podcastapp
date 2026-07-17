@@ -154,7 +154,7 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   from its rules whenever it runs low — service-side, so it works with
   the app process dead. Any manual play ends the station.
 - Pinnable **launcher shortcuts** per SmartPlay, and a home-screen
-  SmartPlays widget.
+  SmartPlays widget — both start playback without opening the app.
 
 ## Downloads & storage
 
