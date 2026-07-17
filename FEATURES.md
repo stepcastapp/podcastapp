@@ -29,7 +29,7 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 - Screen transitions animate (fade + slight vertical slide); tab switches
   preserve each tab's scroll position; re-tapping the current tab returns
   to its root.
-- **First run**: an empty Library offers **Find shows** (→ Discover) and
+- **First run**: an empty Library offers **Find shows** (→ Search) and
   **Import from another app** (→ Settings) buttons.
 
 ## Library
@@ -50,15 +50,19 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   their tile/row everywhere.
 - Optional **per-category refresh buttons** on section headers (Settings
   toggle), with an in-flight spinner.
-- Header icons: Discover, library search, refresh-all, Settings.
+- Header icons: **search** (one surface for library search, Discover,
+  RSS URLs, and add-local-folder), refresh-all, Settings.
 - **Multi-select** (long-press tiles) for bulk category assignment.
-- **Library search**: shows by title and episodes by title, with full
-  episode-row actions on results.
+- **Unified search** (the header search icon): one field searches shows
+  and episodes in your library live (full episode-row actions on
+  results), submits to Apple Podcasts, and accepts a pasted RSS URL;
+  browse mode shows the Apple top charts and the add-local-folder
+  action.
 
 ## Discover & subscribing
 
-- **Discover** (compass icon on the Library header): Apple top-charts
-  until you search; search by name or paste an RSS URL.
+- **Discover** (inside the unified search): Apple top-charts until you
+  search; submit to search Apple by name, or paste an RSS URL.
 - **Preview before subscribing**: tapping any result (or a pasted URL)
   opens a preview — artwork, author, expandable description, the 30
   latest episodes — and every episode **streams right there without
@@ -74,7 +78,7 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 - Share-target and `podcast://`/`feed://` scheme intents land in Discover
   with the URL prefilled.
 - **Local-folder virtual podcasts**: point Stepcast at a folder of audio
-  files (Settings → Add local folder); it becomes a subscription whose
+  files (Search → Add local folder); it becomes a subscription whose
   refresh rescans the folder. Episode duration AND embedded artwork are
   read from each file's metadata (existing libraries backfill on the next
   rescan); the folder itself takes the first embedded art found, and a

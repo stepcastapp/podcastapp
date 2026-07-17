@@ -29,7 +29,6 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -80,7 +79,6 @@ fun HomeScreen(
     onPodcastClick: (Long) -> Unit,
     onCategoryClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenDiscover: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenInbox: () -> Unit
 ) {
@@ -133,16 +131,12 @@ fun HomeScreen(
                 .padding(start = 16.dp, end = 4.dp, top = 4.dp)
         ) {
             ScreenTitle(stringResource(R.string.library), modifier = Modifier.weight(1f))
-            IconButton(onClick = onOpenDiscover) {
-                Icon(
-                    Icons.Rounded.Explore,
-                    contentDescription = stringResource(R.string.discover)
-                )
-            }
+            // one icon for the whole find surface: library search, Discover,
+            // RSS URLs, and add-local-folder all live behind it
             IconButton(onClick = onOpenSearch) {
                 Icon(
                     Icons.Rounded.Search,
-                    contentDescription = stringResource(R.string.search_your_library)
+                    contentDescription = stringResource(R.string.search)
                 )
             }
             IconButton(onClick = { RefreshWorker.refreshNow(context) }) {
@@ -164,7 +158,7 @@ fun HomeScreen(
                     // a fresh install shouldn't have to hunt through header
                     // icons and Settings to get its first shows
                     androidx.compose.material3.Button(
-                        onClick = onOpenDiscover,
+                        onClick = onOpenSearch,
                         modifier = Modifier.padding(top = 20.dp)
                     ) {
                         Text(stringResource(R.string.find_shows))

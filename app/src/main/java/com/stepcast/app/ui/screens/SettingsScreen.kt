@@ -137,30 +137,7 @@ fun SettingsScreen(
         }
     }
 
-    val localFolderLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        context.contentResolver.takePersistableUriPermission(
-            uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-        )
-        scope.launch {
-            try {
-                repository.addLocalFolder(uri)
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.local_folder_added),
-                    Toast.LENGTH_SHORT
-                ).show()
-            } catch (e: Exception) {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.couldnt_read_folder, e.message ?: ""),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
-    }
+    // (add-local-folder moved to the unified search screen)
 
     val importOpmlLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -671,11 +648,6 @@ fun SettingsScreen(
             hint = stringResource(R.string.a_refresh_icon_on_each_category_header_in),
             checked = AppSettings.categoryRefreshButtons,
             onToggle = { AppSettings.setCategoryRefreshButtons(context, it) }
-        )
-        ActionRow(
-            label = stringResource(R.string.add_local_folder),
-            hint = stringResource(R.string.turn_a_folder_of_audio_files_into_a_virtua),
-            onClick = { localFolderLauncher.launch(null) }
         )
         ActionRow(
             label = stringResource(R.string.import_opml),

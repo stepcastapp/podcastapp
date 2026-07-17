@@ -273,11 +273,8 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                     onOpenSettings = {
                         navController.navigate("settings") { launchSingleTop = true }
                     },
-                    onOpenDiscover = {
-                        navController.navigate("search") { launchSingleTop = true }
-                    },
                     onOpenSearch = {
-                        navController.navigate("librarysearch") { launchSingleTop = true }
+                        navController.navigate("search") { launchSingleTop = true }
                     },
                     onOpenInbox = {
                         navController.navigate("inbox") { launchSingleTop = true }
@@ -297,14 +294,6 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                     onOpenSchedule = {
                         navController.navigate("schedule") { launchSingleTop = true }
                     }
-                )
-            }
-            composable("librarysearch") {
-                com.stepcast.app.ui.screens.LibrarySearchScreen(
-                    repository = app.repository,
-                    player = player,
-                    playerState = playerState,
-                    onPodcastClick = { navController.navigate("podcast/$it") }
                 )
             }
             composable(
@@ -372,12 +361,16 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
             composable("search") {
                 SearchScreen(
                     search = app.search,
+                    repository = app.repository,
+                    player = player,
+                    playerState = playerState,
                     initialQuery = sharedFeedUrl.orEmpty(),
                     onOpenPreview = { feedUrl ->
                         navController.navigate(
                             "preview/${android.net.Uri.encode(feedUrl)}"
                         ) { launchSingleTop = true }
-                    }
+                    },
+                    onPodcastClick = { navController.navigate("podcast/$it") }
                 )
             }
             composable(
