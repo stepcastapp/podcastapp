@@ -80,14 +80,40 @@ fun SmartPlayRow(
                 snackbar.showSnackbar(message)
                 return@launch
             }
+            // With streaming off, PlayerConnection.play() turns an
+            // undownloaded head into a background download and returns —
+            // which used to happen AFTER the queue was already replaced, so
+            // the queue filled but nothing played. Pick the first episode
+            // that is playable right now as the head instead; if nothing is
+            // downloaded yet, leave the queue alone and say what's happening.
+            val head = if (com.stepcast.app.data.AppSettings.streamWhenNotDownloaded) {
+                episodes.first()
+            } else {
+                episodes.firstOrNull { ep ->
+                    ep.audioUrl.startsWith("content:") ||
+                        ep.localFilePath?.let { java.io.File(it).exists() } == true
+                }
+            }
+            if (head == null) {
+                com.stepcast.app.download.DownloadWorker.start(
+                    context, episodes.first().id
+                )
+                snackbar.showSnackbar(
+                    context.getString(
+                        R.string.smartplay_downloading_first, smartPlay.name
+                    )
+                )
+                return@launch
+            }
             // starting a SmartPlay replaces a possibly hand-curated queue —
             // that must never be silent or unrecoverable
             val before = repository.queueSnapshot().map { it.id }
-            repository.replaceQueue(episodes.drop(1).map { it.id })
-            val first = episodes.first()
+            repository.replaceQueue(
+                episodes.filter { it.id != head.id }.map { it.id }
+            )
             player.play(
-                first,
-                podcasts.firstOrNull { it.id == first.podcastId },
+                head,
+                podcasts.firstOrNull { it.id == head.podcastId },
                 fromStationId = if (smartPlay.continuous) smartPlay.id else 0L
             )
             if (before.isNotEmpty()) {

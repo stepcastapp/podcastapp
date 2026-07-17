@@ -146,7 +146,10 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   fill the queue and start playing. Per-rule live "N match now"
   diagnostics with plain-language explanations when a rule matches
   nothing. Reorderable strip; starting one over a non-empty queue offers
-  **undo**.
+  **undo**. With streaming off, the first already-downloaded match becomes
+  the head (instead of silently downloading and playing nothing); if no
+  match is downloaded yet, the queue is left alone and the first episode
+  starts downloading with a snackbar saying so.
 - **Stations**: a SmartPlay flagged as a Station keeps refilling the queue
   from its rules whenever it runs low — service-side, so it works with
   the app process dead. Any manual play ends the station.

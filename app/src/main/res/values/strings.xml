@@ -290,6 +290,7 @@
     <string name="retry_download">Retry download</string>
     <string name="download">Download</string>
     <string name="download_now_mobile_data">Download now (mobile data)</string>
+    <string name="smartplay_downloading_first">Nothing in %1$s is downloaded yet — downloading the first episode</string>
     <string name="schedule">Schedule</string>
     <string name="schedule_subtitle">Refresh cadence per category and download rules per show. Tap a row to edit.</string>
     <string name="schedule_settings_hint">Refresh cadence and download rules at a glance</string>
