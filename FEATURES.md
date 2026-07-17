@@ -53,16 +53,17 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 - Header icons: **search** (one surface for library search, Discover,
   RSS URLs, and add-local-folder), refresh-all, Settings.
 - **Multi-select** (long-press tiles) for bulk category assignment.
-- **Unified search** (the header search icon): one field searches shows
-  and episodes in your library live (full episode-row actions on
-  results), submits to Apple Podcasts, and accepts a pasted RSS URL;
-  browse mode shows the Apple top charts and the add-local-folder
-  action.
+- **Unified search** (the header search icon): one always-live field over
+  two tabs — **Library** (default; shows and episodes as you type, full
+  episode-row actions) and **Discover** (directory search as you type,
+  top charts while the field is empty). A pasted RSS URL surfaces an
+  "open feed preview" row; add-local-folder sits under the field whenever
+  it's blank; a no-match library search offers Discover one tap away.
 
 ## Discover & subscribing
 
-- **Discover** (inside the unified search): Apple top-charts until you
-  search; submit to search Apple by name, or paste an RSS URL.
+- **Discover** (the unified search's second tab): top-charts until you
+  type; directory search as you type, or paste an RSS URL.
 - **Preview before subscribing**: tapping any result (or a pasted URL)
   opens a preview — artwork, author, expandable description, the 30
   latest episodes — and every episode **streams right there without
