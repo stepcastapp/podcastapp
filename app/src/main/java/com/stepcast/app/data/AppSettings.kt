@@ -75,6 +75,29 @@ object AppSettings {
     var autoBackupFolder by mutableStateOf<String?>(null)
         private set
 
+    /**
+     * "Fresh by" checkpoints — the four named daily moments (Morning,
+     * Midday, Evening, Night) as minutes after midnight, plus which are
+     * enabled. Automatic-mode shows refresh to meet every enabled one.
+     */
+    var checkpointTimes by mutableStateOf(listOf(390, 720, 1050, 1320))
+        private set
+    var checkpointEnabled by mutableStateOf(listOf(true, true, true, false))
+        private set
+
+    /** No automatic refreshes between these times when enabled. */
+    var quietHoursEnabled by mutableStateOf(false)
+        private set
+    var quietStartMinutes by mutableStateOf(1380)
+        private set
+    var quietEndMinutes by mutableStateOf(360)
+        private set
+
+    fun enabledCheckpointMinutes(): List<Int> =
+        checkpointTimes.filterIndexed { i, _ ->
+            checkpointEnabled.getOrElse(i) { false }
+        }
+
     fun init(context: Context) {
         // one small file, read once at startup — blocking is deliberate so
         // everything after Application.onCreate sees real values
@@ -101,6 +124,56 @@ object AppSettings {
         categoryRefreshButtons = p[booleanPreferencesKey(KEY_CAT_REFRESH)] ?: false
         libraryCompactList = p[booleanPreferencesKey(KEY_LIB_COMPACT)] ?: false
         activeStationId = p[longPreferencesKey(KEY_ACTIVE_STATION)] ?: 0L
+        checkpointTimes = parseIntList(
+            p[stringPreferencesKey(KEY_CHECKPOINT_TIMES)], listOf(390, 720, 1050, 1320)
+        )
+        checkpointEnabled = parseBoolList(
+            p[stringPreferencesKey(KEY_CHECKPOINT_ON)], listOf(true, true, true, false)
+        )
+        quietHoursEnabled = p[booleanPreferencesKey(KEY_QUIET_ON)] ?: false
+        quietStartMinutes = p[intPreferencesKey(KEY_QUIET_START)] ?: 1380
+        quietEndMinutes = p[intPreferencesKey(KEY_QUIET_END)] ?: 360
+    }
+
+    private fun parseIntList(raw: String?, fallback: List<Int>): List<Int> {
+        val parsed = raw?.split(",")?.mapNotNull { it.trim().toIntOrNull() }
+        return if (parsed != null && parsed.size == fallback.size) parsed else fallback
+    }
+
+    private fun parseBoolList(raw: String?, fallback: List<Boolean>): List<Boolean> {
+        val parsed = raw?.split(",")?.map { it.trim() == "1" }
+        return if (parsed != null && parsed.size == fallback.size) parsed else fallback
+    }
+
+    fun setCheckpointTime(context: Context, index: Int, minutes: Int) {
+        if (index !in checkpointTimes.indices) return
+        checkpointTimes = checkpointTimes.toMutableList().also {
+            it[index] = minutes.coerceIn(0, 1439)
+        }
+        putString(context, KEY_CHECKPOINT_TIMES, checkpointTimes.joinToString(","))
+    }
+
+    fun setCheckpointEnabled(context: Context, index: Int, enabled: Boolean) {
+        if (index !in checkpointEnabled.indices) return
+        checkpointEnabled = checkpointEnabled.toMutableList().also {
+            it[index] = enabled
+        }
+        putString(
+            context, KEY_CHECKPOINT_ON,
+            checkpointEnabled.joinToString(",") { if (it) "1" else "0" }
+        )
+    }
+
+    fun setQuietHoursEnabled(context: Context, enabled: Boolean) {
+        quietHoursEnabled = enabled
+        putBoolean(context, KEY_QUIET_ON, enabled)
+    }
+
+    fun setQuietHours(context: Context, startMinutes: Int, endMinutes: Int) {
+        quietStartMinutes = startMinutes.coerceIn(0, 1439)
+        quietEndMinutes = endMinutes.coerceIn(0, 1439)
+        putInt(context, KEY_QUIET_START, quietStartMinutes)
+        putInt(context, KEY_QUIET_END, quietEndMinutes)
     }
 
     /** The continuous SmartPlay currently feeding the queue; 0 = none. */
@@ -287,6 +360,11 @@ object AppSettings {
     private const val KEY_CAT_REFRESH = "categoryRefreshButtons"
     private const val KEY_LIB_COMPACT = "libraryCompactList"
     private const val KEY_ACTIVE_STATION = "activeStationId"
+    private const val KEY_CHECKPOINT_TIMES = "checkpointTimes"
+    private const val KEY_CHECKPOINT_ON = "checkpointEnabled"
+    private const val KEY_QUIET_ON = "quietHoursEnabled"
+    private const val KEY_QUIET_START = "quietStartMinutes"
+    private const val KEY_QUIET_END = "quietEndMinutes"
 
     // swipe gesture actions
     const val SWIPE_PLAYED = "played"

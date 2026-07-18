@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SmartPlay::class, SmartPlayEntry::class, CategoryMeta::class,
         ListenStat::class, PodcastCategory::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class StepcastDatabase : RoomDatabase() {
@@ -142,6 +142,44 @@ abstract class StepcastDatabase : RoomDatabase() {
             }
         }
 
+        // Schedule paradigm rework: per-show rules replace per-category
+        // rolling intervals. Default 0 = Automatic. Legacy category cadence
+        // maps to the nearest rule: an anchored cadence becomes a pinned
+        // daily-at rule (anchor preserved); a 1-2h rolling cadence becomes
+        // hourly (applied second, so it wins for multi-category shows);
+        // everything else becomes Automatic — the honest replacement for a
+        // frameless "every N hours".
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE podcasts ADD COLUMN scheduleMode " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE podcasts ADD COLUMN scheduleParam " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "UPDATE podcasts SET scheduleMode = 2, scheduleParam = (" +
+                        "SELECT c.anchorMinutes FROM categories c " +
+                        "JOIN podcast_categories pc ON pc.category = c.name " +
+                        "WHERE pc.podcastId = podcasts.id " +
+                        "AND c.refreshHours > 0 AND c.anchorMinutes >= 0 " +
+                        "LIMIT 1) " +
+                        "WHERE id IN (SELECT pc.podcastId FROM podcast_categories pc " +
+                        "JOIN categories c ON pc.category = c.name " +
+                        "WHERE c.refreshHours > 0 AND c.anchorMinutes >= 0)"
+                )
+                db.execSQL(
+                    "UPDATE podcasts SET scheduleMode = 1, scheduleParam = 0 " +
+                        "WHERE id IN (SELECT pc.podcastId FROM podcast_categories pc " +
+                        "JOIN categories c ON pc.category = c.name " +
+                        "WHERE c.refreshHours BETWEEN 1 AND 2 " +
+                        "AND c.anchorMinutes < 0)"
+                )
+            }
+        }
+
         fun get(context: Context): StepcastDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -152,7 +190,8 @@ abstract class StepcastDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
-                        MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18
+                        MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
+                        MIGRATION_18_19
                     )
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }

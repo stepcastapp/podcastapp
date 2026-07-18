@@ -46,7 +46,15 @@ data class Podcast(
      */
     val localFolderUri: String? = null,
     val subscribedAt: Long = System.currentTimeMillis(),
-    val lastRefreshed: Long = 0
+    val lastRefreshed: Long = 0,
+    /**
+     * Refresh rule (see ScheduleEngine.MODE_*): 0 = Automatic (checkpoints +
+     * around expected releases + daily baseline, the default), 1 = hourly,
+     * 2 = daily at [scheduleParam] minutes, 3 = weekly at
+     * dow*1440+minutes, 4 = manual only.
+     */
+    val scheduleMode: Int = 0,
+    val scheduleParam: Int = 0
 )
 
 @Entity(

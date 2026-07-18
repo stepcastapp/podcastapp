@@ -752,6 +752,14 @@ class PodcastRepository(
         return id
     }
 
+    /** Per-show refresh rule (see ScheduleEngine.MODE_*). */
+    suspend fun setScheduleRule(podcastId: Long, mode: Int, param: Int) =
+        db.podcastDao().updateScheduleRule(podcastId, mode, param)
+
+    /** Newest-first publish times, the release-pattern inference input. */
+    suspend fun recentPubDates(podcastId: Long): List<Long> =
+        db.episodeDao().recentPubDates(podcastId)
+
     suspend fun smartPlayList(): List<SmartPlay> = db.smartPlayDao().listAll()
 
     suspend fun episodeCount(): Int = db.episodeDao().countAll()

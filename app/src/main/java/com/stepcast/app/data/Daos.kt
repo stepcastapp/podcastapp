@@ -36,6 +36,9 @@ interface PodcastDao {
     @Query("UPDATE podcasts SET adJumpSec = :sec WHERE id = :id")
     suspend fun updateAdJump(id: Long, sec: Int)
 
+    @Query("UPDATE podcasts SET scheduleMode = :mode, scheduleParam = :param WHERE id = :id")
+    suspend fun updateScheduleRule(id: Long, mode: Int, param: Int)
+
     @Query("UPDATE podcasts SET playbackSpeed = :speed WHERE id = :id")
     suspend fun updatePlaybackSpeed(id: Long, speed: Float)
 
@@ -177,6 +180,13 @@ interface EpisodeDao {
             "ORDER BY pubDateMs DESC LIMIT 60"
     )
     suspend fun searchByTitle(query: String): List<Episode>
+
+    /** Release-pattern inference input (ScheduleEngine's Automatic mode). */
+    @Query(
+        "SELECT pubDateMs FROM episodes WHERE podcastId = :podcastId " +
+            "AND pubDateMs > 0 ORDER BY pubDateMs DESC LIMIT 20"
+    )
+    suspend fun recentPubDates(podcastId: Long): List<Long>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(episodes: List<Episode>): List<Long>

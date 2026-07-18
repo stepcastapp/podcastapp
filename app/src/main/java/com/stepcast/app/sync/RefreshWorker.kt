@@ -43,41 +43,30 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val app = applicationContext as StepcastApplication
         val force = inputData.getBoolean(KEY_FORCE, false)
-        val metas = app.repository.categoryMetaList()
-        val membershipsByPodcast = app.repository.podcastCategoryList()
-            .groupBy({ it.podcastId }, { it.category })
         // category-scoped run (automation's REFRESH_CATEGORY): only that
         // category's members, matched case-insensitively
         val categoryIds = inputData.getString(KEY_CATEGORY)?.let { asked ->
-            val real = metas.map { it.name }
-                .firstOrNull { it.equals(asked, ignoreCase = true) } ?: asked
+            val names = app.repository.categoryMetaList().map { it.name }
+            val real = names.firstOrNull { it.equals(asked, ignoreCase = true) }
+                ?: asked
             app.repository.categoryMemberIds(real).toHashSet()
         }
+        // Schedule paradigm: per-show rules + global checkpoints/quiet hours
+        // (ScheduleEngine); Automatic-mode shows also check shortly after
+        // their inferred expected release (ReleasePattern over pubDates).
+        val cfg = scheduleConfig()
+        val now = System.currentTimeMillis()
         val due = app.repository.allPodcasts().filter { podcast ->
             if (categoryIds != null && podcast.id !in categoryIds) return@filter false
-            // per-category cadence, optionally anchored to a time of day;
-            // a podcast in several categories is due when ANY of them fires
-            val podcastMetas = membershipsByPodcast[podcast.id].orEmpty()
-                .mapNotNull { name -> metas.firstOrNull { it.name == name } }
-            val now = System.currentTimeMillis()
-            force || if (podcastMetas.isEmpty()) {
-                RefreshSchedule.isDue(
-                    lastRefreshedMs = podcast.lastRefreshed,
-                    freqHours = com.stepcast.app.data.AppSettings.defaultRefreshHours,
-                    anchorMinutes = -1,
-                    nowMs = now
-                )
-            } else {
-                podcastMetas.any { meta ->
-                    RefreshSchedule.isDue(
-                        lastRefreshedMs = podcast.lastRefreshed,
-                        freqHours = meta.refreshHours.takeIf { it > 0 }
-                            ?: com.stepcast.app.data.AppSettings.defaultRefreshHours,
-                        anchorMinutes = meta.anchorMinutes,
-                        nowMs = now
-                    )
-                }
-            }
+            if (force) return@filter true
+            ScheduleEngine.isDue(
+                mode = podcast.scheduleMode,
+                param = podcast.scheduleParam,
+                lastRefreshedMs = podcast.lastRefreshed,
+                expectedReleaseMs = expectedReleaseFor(app, podcast),
+                nowMs = now,
+                cfg = cfg
+            )
         }
         // parallel fetch, BOUNDED: a big library refreshes fast, but a
         // 300-feed library must not open 300 sockets/parsers at once —
@@ -103,7 +92,61 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         ) {
             postNewEpisodesNotification(newCount, updatedPodcasts)
         }
+        // the hourly periodic tick is only the safety net — plan a precise
+        // wake-up at the earliest next promise (checkpoint, expected release,
+        // pinned slot) so 6:30 means 6:30, not "the tick after 6:30"
+        planNextCheck(app)
         Result.success()
+    }
+
+    private suspend fun planNextCheck(app: StepcastApplication) {
+        val cfg = scheduleConfig()
+        val now = System.currentTimeMillis()
+        val next = app.repository.allPodcasts().mapNotNull { podcast ->
+            ScheduleEngine.nextCheck(
+                mode = podcast.scheduleMode,
+                param = podcast.scheduleParam,
+                lastRefreshedMs = podcast.lastRefreshed,
+                expectedReleaseMs = expectedReleaseFor(app, podcast),
+                nowMs = now,
+                cfg = cfg
+            )?.timeMs
+        }.minOrNull() ?: return
+        val delayMs = (next - now).coerceIn(5 * 60_000L, 6 * 3_600_000L)
+        val request = OneTimeWorkRequestBuilder<RefreshWorker>()
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .build()
+        WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+            "feed-refresh-planned", ExistingWorkPolicy.REPLACE, request
+        )
+    }
+
+    private fun scheduleConfig(): ScheduleEngine.Config {
+        val settings = com.stepcast.app.data.AppSettings
+        return ScheduleEngine.Config(
+            checkpointMinutes = settings.enabledCheckpointMinutes(),
+            quietEnabled = settings.quietHoursEnabled,
+            quietStartMinutes = settings.quietStartMinutes,
+            quietEndMinutes = settings.quietEndMinutes
+        )
+    }
+
+    private suspend fun expectedReleaseFor(
+        app: StepcastApplication,
+        podcast: com.stepcast.app.data.Podcast
+    ): Long? {
+        if (podcast.scheduleMode != ScheduleEngine.MODE_AUTO) return null
+        if (podcast.localFolderUri != null) return null
+        val pubs = app.repository.recentPubDates(podcast.id)
+        val pattern = ReleasePattern.infer(pubs)
+        return ReleasePattern.nextExpectedMs(
+            pattern, pubs.firstOrNull() ?: 0L, System.currentTimeMillis()
+        )
     }
 
     private fun postNewEpisodesNotification(count: Int, podcasts: List<String>) {
