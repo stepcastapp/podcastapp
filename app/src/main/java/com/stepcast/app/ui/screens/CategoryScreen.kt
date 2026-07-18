@@ -232,21 +232,8 @@ fun CategoryScreen(
 
     if (editOpen) {
         var name by remember { mutableStateOf(category) }
-        val meta = metas.firstOrNull { it.name == category }
-        val currentHours = meta?.refreshHours ?: 0
-        var hoursText by remember {
-            mutableStateOf(if (currentHours > 0) currentHours.toString() else "")
-        }
-        val currentAnchor = meta?.anchorMinutes ?: -1
-        var anchorText by remember {
-            mutableStateOf(
-                if (currentAnchor >= 0) {
-                    com.stepcast.app.sync.RefreshSchedule.formatAnchor(currentAnchor)
-                } else {
-                    ""
-                }
-            )
-        }
+        // refresh cadence moved to per-show rules (Settings -> Schedule);
+        // categories now carry organization + bulk retention only
         var bulkKeepText by remember { mutableStateOf("") }
         var bulkAgeText by remember { mutableStateOf("") }
         AlertDialog(
@@ -264,34 +251,6 @@ fun CategoryScreen(
                         ),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(Modifier.padding(top = 8.dp)) {
-                        OutlinedTextField(
-                            value = hoursText,
-                            onValueChange = { hoursText = it.filter(Char::isDigit).take(3) },
-                            label = { Text(stringResource(R.string.refresh_every_n_hours_empty_default)) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1.2f)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedTextField(
-                            value = anchorText,
-                            onValueChange = { text ->
-                                anchorText = text.filter { it.isDigit() || it == ':' }.take(5)
-                            },
-                            label = { Text(stringResource(R.string.from_h_mm)) },
-                            singleLine = true,
-                            isError = anchorText.isNotBlank() &&
-                                com.stepcast.app.sync.RefreshSchedule
-                                    .parseAnchor(anchorText) == null,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Text(
-                        stringResource(R.string.anchor_time_explainer),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp)
                     )
                     Text(
                         stringResource(R.string.bulk_apply_explainer),
@@ -356,12 +315,6 @@ fun CategoryScreen(
                     editOpen = false
                     val newName = name.trim()
                     scope.launch {
-                        repository.setCategoryRefreshHours(
-                            category,
-                            hoursText.toIntOrNull() ?: 0,
-                            com.stepcast.app.sync.RefreshSchedule
-                                .parseAnchor(anchorText) ?: -1
-                        )
                         // bulk retention only when the user typed something
                         val bulkKeep = bulkKeepText.toIntOrNull()
                         val bulkAge = bulkAgeText.toIntOrNull()

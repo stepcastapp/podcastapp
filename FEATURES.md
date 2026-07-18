@@ -40,8 +40,8 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 - **Categories** are real multi-membership: a podcast can live in any
   number of categories (multi-select chips in podcast settings) and
   appears under each; uncategorized shows gather under "Other podcasts".
-  Categories can be renamed, deleted, reordered, and have per-category
-  refresh cadence (see Feeds & refresh).
+  Categories can be renamed, deleted, and reordered; refresh timing
+  lives on shows (see Feeds & refresh).
 - **New episodes card** at the top whenever the inbox is non-empty (see
   Inbox).
 - **Needs attention** — an automatic error-tinted section at the very
@@ -200,10 +200,19 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 
 ## Feeds & refresh
 
-- Background refresh via WorkManager (hourly worker), **per-category
-  cadence** ("every N hours") with an optional **reference time-of-day
-  anchor** ("every 6h from 5:00" → 5:00, 11:00, 17:00, 23:00); missed
-  slots catch up. Multi-category shows refresh when ANY membership is due.
+- **Promise-based scheduling** (Settings → Schedule): no more "every N
+  hours". **"Fresh by" checkpoints** (Morning/Midday/Evening/Night, times
+  editable, each toggleable) promise new episodes by those clock times;
+  **quiet hours** block automatic checks overnight. Every show defaults
+  to **Automatic**: fresh by every checkpoint, checked shortly after its
+  **inferred release pattern** says it usually drops (learned from its
+  publish history — daily/weekdays/weekly + typical time), and at least
+  once a day. Power overrides per show: **Hourly**, **Daily at HH:MM**,
+  **Weekly at day+time**, or **Manual only** — pinned rules are literal
+  and skip checkpoints. The Schedule screen opens with a **"next
+  checks" timeline** showing when and why each upcoming check happens.
+  Engine-side, an hourly WorkManager tick evaluates the plan and a
+  precise one-shot wake-up targets the earliest next promise.
 - **Schedule overview** (Settings → Feeds & downloads → Schedule): a
   read-first screen listing every category's refresh cadence (+ member
   count) and every show's download rules (keep count, max age, cap,

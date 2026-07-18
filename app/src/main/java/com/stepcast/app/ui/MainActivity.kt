@@ -341,9 +341,6 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
             composable("schedule") {
                 com.stepcast.app.ui.screens.ScheduleScreen(
                     repository = app.repository,
-                    onOpenCategory = {
-                        navController.navigate("category/${android.net.Uri.encode(it)}")
-                    },
                     onOpenPodcast = { navController.navigate("podcast/$it") }
                 )
             }

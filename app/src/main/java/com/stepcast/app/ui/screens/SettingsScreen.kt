@@ -592,13 +592,8 @@ fun SettingsScreen(
             toggleSection("Feeds & downloads")
         }
         if (sectionOpen("Feeds & downloads")) {
-        NumberSetting(
-            label = stringResource(R.string.refresh_feeds_every),
-            unit = stringResource(R.string.hours),
-            value = AppSettings.defaultRefreshHours,
-            hint = stringResource(R.string.s_1_168_categories_can_override_this_per_cat),
-            onCommit = { AppSettings.setDefaultRefreshHours(context, it) }
-        )
+        // "refresh every N hours" is gone — the Schedule screen's
+        // checkpoints + per-show rules replaced the rolling interval
         NumberSetting(
             label = stringResource(R.string.auto_keep_downloads),
             unit = stringResource(R.string.episodes_2),

@@ -4,6 +4,20 @@ Hard-won lessons from building Stepcast, kept so nobody (human or agent)
 re-learns them the expensive way. Every entry here cost at least one broken
 build or one confused on-device session.
 
+## Scheduling
+
+- **Intervals lie; promises don't.** "Refresh every N hours" is rolling
+  from the last refresh, so actual check times drift daily and users
+  can't reason about them. The schedule engine (ScheduleEngine +
+  ReleasePattern, both pure and zone-parameterized) expresses everything
+  as "next check at TIME because REASON" — checkpoints, expected
+  releases, pinned slots. Keep it pure: CI is the only compiler, and the
+  JVM tests on these two files are the only fast feedback loop.
+- **The hourly periodic tick stays.** WorkManager one-shots are the
+  precision tool (planned wake-up at the earliest next promise) but they
+  can be deferred/dropped; the hourly tick is the safety net that
+  guarantees eventual convergence. Never remove one for the other.
+
 ## Glance widgets
 
 - **Sessions freeze state.** Glance keeps a widget's composition session
