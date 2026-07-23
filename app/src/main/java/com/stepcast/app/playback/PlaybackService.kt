@@ -1059,8 +1059,16 @@ class PlaybackService : MediaLibraryService() {
             )
             val player = mediaSession?.player
                 ?: return@future SessionResult(SessionResult.RESULT_ERROR_INVALID_STATE)
+            // resume a half-listened head where it left off (C.TIME_UNSET
+            // restarted it from zero — "why did my episode start over?");
+            // same near-end guard as PlayerConnection so a nearly-finished
+            // episode doesn't instant-complete
+            val head = episodes.first()
+            val nearEnd = head.durationMs > 0 &&
+                head.positionMs >= head.durationMs - 15_000
+            val startMs = if (head.played || nearEnd) 0L else head.positionMs
             player.setMediaItems(
-                episodes.map { episodeToItem(it) }, 0, C.TIME_UNSET
+                episodes.map { episodeToItem(it) }, 0, startMs
             )
             player.prepare()
             player.play()

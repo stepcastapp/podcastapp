@@ -114,7 +114,8 @@ fun SmartPlayRow(
             player.play(
                 head,
                 podcasts.firstOrNull { it.id == head.podcastId },
-                fromStationId = if (smartPlay.continuous) smartPlay.id else 0L
+                fromStationId = if (smartPlay.continuous) smartPlay.id else 0L,
+                preserveInterrupted = false
             )
             if (before.isNotEmpty()) {
                 val result = snackbar.showSnackbar(

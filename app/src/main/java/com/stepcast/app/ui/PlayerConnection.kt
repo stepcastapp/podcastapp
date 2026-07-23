@@ -241,7 +241,15 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
      * continuous-SmartPlay start; any other play deliberately ends the
      * active station.
      */
-    fun play(episode: Episode, podcast: Podcast?, fromStationId: Long = 0L) {
+    fun play(
+        episode: Episode,
+        podcast: Podcast?,
+        fromStationId: Long = 0L,
+        // SmartPlay starts pass false: the user chose a fresh playlist, so
+        // the previously-playing episode must not be spliced into it (its
+        // position is saved; switching back resumes it)
+        preserveInterrupted: Boolean = true
+    ) {
         scope.launch {
             // A tap immediately after cold launch can arrive before the
             // controller finishes connecting (set async in init). Rather than
@@ -272,10 +280,14 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
                 ).show()
                 return@launch
             }
-            val interrupted = c.currentMediaItem?.mediaId?.toLongOrNull()
-                ?.takeIf { it != episode.id }
-                ?.let { repository.episode(it) }
-                ?.takeIf { !it.played }
+            val interrupted = if (preserveInterrupted) {
+                c.currentMediaItem?.mediaId?.toLongOrNull()
+                    ?.takeIf { it != episode.id }
+                    ?.let { repository.episode(it) }
+                    ?.takeIf { !it.played }
+            } else {
+                null
+            }
             val upNext = buildList {
                 interrupted?.let { add(it) }
                 addAll(
