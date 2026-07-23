@@ -57,8 +57,35 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         // promotion goes through plain notify() on the same id.
         val promoted =
             runCatching { setForeground(foregroundInfo(episode.title, 0)) }.isSuccess
+        // up to two downloads stream at once (the gate), which used to mean
+        // two separate progress notifications — group them under one summary
+        // so the shade shows a single "Downloading" stack
+        if (promoted) {
+            downloadsShowing.incrementAndGet()
+            runCatching { postGroupSummary() }
+        }
 
         val file = fileFor(applicationContext, episode)
+        try {
+            downloadBody(episodeId, episode, file, promoted)
+        } finally {
+            if (promoted && downloadsShowing.decrementAndGet() <= 0) {
+                runCatching {
+                    applicationContext
+                        .getSystemService(android.app.NotificationManager::class.java)
+                        ?.cancel(SUMMARY_NOTIFICATION_ID)
+                }
+            }
+        }
+    }
+
+    private suspend fun downloadBody(
+        episodeId: Long,
+        episode: Episode,
+        file: File,
+        promoted: Boolean
+    ): Result = withContext(Dispatchers.IO) {
+        val repository = (applicationContext as StepcastApplication).repository
         try {
             repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_RUNNING)
             val request = Request.Builder()
@@ -134,7 +161,24 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             .setProgress(100, progress, progress <= 0)
             .setOngoing(true)
             .setSilent(true)
+            .setGroup(NOTIFICATION_GROUP)
             .build()
+    }
+
+    /** One collapsed "Downloading" stack even with two parallel streams. */
+    private fun postGroupSummary() {
+        val context = applicationContext
+        val nm = context.getSystemService(android.app.NotificationManager::class.java)
+            ?: return
+        val summary = androidx.core.app.NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(com.stepcast.app.R.drawable.ic_notification_steps)
+            .setContentTitle("Downloading episodes")
+            .setOngoing(true)
+            .setSilent(true)
+            .setGroup(NOTIFICATION_GROUP)
+            .setGroupSummary(true)
+            .build()
+        nm.notify(SUMMARY_NOTIFICATION_ID, summary)
     }
 
     private fun foregroundInfo(title: String, progress: Int): ForegroundInfo {
@@ -159,6 +203,10 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
     companion object {
         private val gate = Semaphore(2)
         private const val CHANNEL_ID = "downloads"
+        private const val NOTIFICATION_GROUP = "stepcast-downloads"
+        private const val SUMMARY_NOTIFICATION_ID = 19_999
+        // live progress notifications; the group summary dies with the last one
+        private val downloadsShowing = java.util.concurrent.atomic.AtomicInteger(0)
 
         const val KEY_EPISODE_ID = "episodeId"
 

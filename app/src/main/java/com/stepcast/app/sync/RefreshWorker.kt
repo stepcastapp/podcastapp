@@ -87,8 +87,13 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         }
         val newCount = results.sumOf { it.first }
         val updatedPodcasts = results.filter { it.first > 0 }.map { it.second }
+        // "random notifications throughout the day" — with only-at-checkpoints
+        // on (default), release-window and baseline checks stay silent and
+        // alerts batch up near the user's Fresh-by times
         if (newCount > 0 && inputData.getBoolean(KEY_NOTIFY, true) &&
-            com.stepcast.app.data.AppSettings.newEpisodeNotifications
+            com.stepcast.app.data.AppSettings.newEpisodeNotifications &&
+            (!com.stepcast.app.data.AppSettings.notifyOnlyAtCheckpoints ||
+                nearCheckpoint(cfg))
         ) {
             postNewEpisodesNotification(newCount, updatedPodcasts)
         }
@@ -124,6 +129,16 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         WorkManager.getInstance(applicationContext).enqueueUniqueWork(
             "feed-refresh-planned", ExistingWorkPolicy.REPLACE, request
         )
+    }
+
+    /** True within 45 minutes after any enabled checkpoint slot. */
+    private fun nearCheckpoint(cfg: ScheduleEngine.Config): Boolean {
+        // no checkpoints enabled: don't silently mute every notification
+        if (cfg.checkpointMinutes.isEmpty()) return true
+        val now = System.currentTimeMillis()
+        return cfg.checkpointMinutes.any { minutes ->
+            now - RefreshSchedule.latestSlotMs(minutes, 24, now) <= 45 * 60_000L
+        }
     }
 
     private fun scheduleConfig(): ScheduleEngine.Config {

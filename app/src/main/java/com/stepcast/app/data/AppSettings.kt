@@ -36,6 +36,10 @@ object AppSettings {
         private set
     var newEpisodeNotifications by mutableStateOf(true)
         private set
+
+    /** New-episode alerts only near "Fresh by" checkpoints, not every check. */
+    var notifyOnlyAtCheckpoints by mutableStateOf(true)
+        private set
     var defaultPlaybackSpeed by mutableStateOf(1.0f)
         private set
     var wifiOnlyDownloads by mutableStateOf(false)
@@ -108,6 +112,7 @@ object AppSettings {
         seekForwardSeconds = p[intPreferencesKey(KEY_SEEK_FWD)] ?: 30
         adChapterAutoSkip = p[booleanPreferencesKey(KEY_AD_SKIP)] ?: true
         newEpisodeNotifications = p[booleanPreferencesKey(KEY_NOTIFY_NEW)] ?: true
+        notifyOnlyAtCheckpoints = p[booleanPreferencesKey(KEY_NOTIFY_CHECKPOINTS)] ?: true
         defaultPlaybackSpeed = p[floatPreferencesKey(KEY_DEFAULT_SPEED)] ?: 1.0f
         wifiOnlyDownloads = p[booleanPreferencesKey(KEY_WIFI_ONLY)] ?: false
         streamWhenNotDownloaded = p[booleanPreferencesKey(KEY_STREAM_OK)] ?: true
@@ -246,6 +251,11 @@ object AppSettings {
         putBoolean(context, KEY_NOTIFY_NEW, enabled)
     }
 
+    fun setNotifyOnlyAtCheckpoints(context: Context, enabled: Boolean) {
+        notifyOnlyAtCheckpoints = enabled
+        putBoolean(context, KEY_NOTIFY_CHECKPOINTS, enabled)
+    }
+
     fun setDefaultPlaybackSpeed(context: Context, speed: Float) {
         defaultPlaybackSpeed = speed.coerceIn(0.5f, 3.0f)
         val value = defaultPlaybackSpeed
@@ -344,6 +354,7 @@ object AppSettings {
     private const val KEY_SEEK_FWD = "seekForwardSeconds"
     private const val KEY_AD_SKIP = "adChapterAutoSkip"
     private const val KEY_NOTIFY_NEW = "newEpisodeNotifications"
+    private const val KEY_NOTIFY_CHECKPOINTS = "notifyOnlyAtCheckpoints"
     private const val KEY_DEFAULT_SPEED = "defaultPlaybackSpeed"
     private const val KEY_WIFI_ONLY = "wifiOnlyDownloads"
     private const val KEY_STREAM_OK = "streamWhenNotDownloaded"

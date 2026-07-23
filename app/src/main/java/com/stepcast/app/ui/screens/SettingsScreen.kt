@@ -613,6 +613,14 @@ fun SettingsScreen(
             checked = AppSettings.newEpisodeNotifications,
             onToggle = { AppSettings.setNewEpisodeNotifications(context, it) }
         )
+        if (AppSettings.newEpisodeNotifications) {
+            SwitchSetting(
+                label = stringResource(R.string.notify_only_checkpoints),
+                hint = stringResource(R.string.notify_only_checkpoints_hint),
+                checked = AppSettings.notifyOnlyAtCheckpoints,
+                onToggle = { AppSettings.setNotifyOnlyAtCheckpoints(context, it) }
+            )
+        }
         ActionRow(
             label = stringResource(R.string.storage_2),
             hint = stringResource(R.string.downloaded_episodes_by_podcast_with_one_ta),

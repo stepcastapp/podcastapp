@@ -334,6 +334,8 @@
     <string name="quiet_from">From (H:MM)</string>
     <string name="quiet_until">Until (H:MM)</string>
     <string name="open_show_settings">Open show settings</string>
+    <string name="notify_only_checkpoints">Only around checkpoints</string>
+    <string name="notify_only_checkpoints_hint">Batch new-episode alerts near your Fresh-by times instead of after every check</string>
     <string name="schedule_refresh_cadence">Refresh cadence</string>
     <string name="schedule_downloads">Downloads</string>
     <string name="schedule_default">Default</string>

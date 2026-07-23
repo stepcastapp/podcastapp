@@ -154,7 +154,11 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   **undo**. With streaming off, the first already-downloaded match becomes
   the head (instead of silently downloading and playing nothing); if no
   match is downloaded yet, the queue is left alone and the first episode
-  starts downloading with a snackbar saying so.
+  starts downloading with a snackbar saying so. Starting a SmartPlay
+  **resumes a half-listened head where it left off** (widget and in-app
+  paths alike) and **never splices the previously-playing episode into
+  the new playlist** — its position is saved, so switching back resumes
+  it.
 - **Stations**: a SmartPlay flagged as a Station keeps refilling the queue
   from its rules whenever it runs low — service-side, so it works with
   the app process dead. Any manual play ends the station.
@@ -221,7 +225,9 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 - Refresh-all button (Library) and per-category/per-show refresh with
   new-episode counts in snackbars; per-show refresh also runs the
   download rules.
-- **New-episode notifications** (toggle) from background refresh.
+- **New-episode notifications** (toggle) from background refresh, with an
+  **"only around checkpoints"** option (default on) that batches alerts
+  near the Fresh-by times instead of pinging after every check.
 - Per-show: episode list cap, oldest-first (serials), auto-queue new
   episodes.
 - Bounded refresh/download concurrency, sized for 300+ feed libraries;
