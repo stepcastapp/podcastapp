@@ -48,12 +48,22 @@ build or one confused on-device session.
   route through `PlaybackTrampolineActivity` (activity starts from
   widgets are always allowed; while it's resumed the promotion succeeds).
   Pause/seek/done can stay on the broadcast path.
-- **The keyguard blocks activities that broadcasts sailed past.** Moving
-  widget taps onto the trampoline silently broke lock-screen widgets: an
-  activity start under the keyguard prompts for unlock, while the old
-  broadcast path never did. Any invisible relay activity reachable from
-  a lock-screen surface needs `android:showWhenLocked="true"` (plus
-  `setShowWhenLocked(true)` at runtime for belt and braces).
+- **The keyguard blocks activities that broadcasts sailed past — and
+  `showWhenLocked` does NOT fix it for widget taps.** Moving widget taps
+  onto the trampoline silently broke lock-screen widgets: the One UI
+  lock-screen host demands an unlock before firing an ACTIVITY
+  PendingIntent at all, regardless of the target's
+  `android:showWhenLocked` (tested on-device; the attribute is kept
+  anyway, it's harmless). Only BROADCAST taps fire while locked. So
+  play/pause is a broadcast callback again, with the FGS problem solved
+  differently: pause via the bound controller (never needs FGS), play by
+  injecting `KEYCODE_MEDIA_PLAY` through
+  `AudioManager.dispatchMediaKeyEvent` — the system media-key pipeline
+  (what Bluetooth buttons use) carries the FGS exemption and revives a
+  dead session via playback resumption. Plain PLAY, never PLAY_PAUSE, so
+  a misrouted key is a no-op in an already-playing app instead of
+  pausing it. SmartPlay starts have no media-key equivalent and stay on
+  the trampoline (they may prompt for unlock from the lock screen).
 - **Responsive shrinking.** `SizeMode.Responsive` breakpoints keep the
   play/pause button alive as the bar widget shrinks (text drops <200dp,
   art drops <110dp); `minResizeWidth=40dp` allows 1-cell. Launchers cache

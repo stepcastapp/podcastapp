@@ -267,9 +267,11 @@ opacity/background setting (including fully transparent):
 - **Play button** — 1x1 play/pause only.
 - **SmartPlays** — one-tap SmartPlay starters.
 
-Playback buttons (play/pause, SmartPlay starts) work from **lock-screen
-widgets without unlocking** — the invisible relay they route through is
-allowed over the keyguard.
+Play/pause works from **lock-screen widgets without unlocking**: the tap
+is a broadcast (activity starts are unlock-gated by the lock-screen
+host), and starting playback rides the system media-key pipeline — the
+same one Bluetooth buttons use. SmartPlay starts from the lock screen
+still prompt for unlock (they need more than a media key can say).
 
 ## Notifications, lock screen, Auto
 

@@ -201,7 +201,7 @@ internal fun PlayPauseButton(isPlaying: Boolean, opacity: Int, sizeDp: Int = 44)
             contentAlignment = Alignment.Center,
             modifier = GlanceModifier
                 .size(sizeDp.dp)
-                .clickable(playPauseTrampolineAction())
+                .clickable(actionRunCallback<PlayPauseAction>())
         ) {
             Image(
                 provider = ImageProvider(icon),
@@ -214,7 +214,7 @@ internal fun PlayPauseButton(isPlaying: Boolean, opacity: Int, sizeDp: Int = 44)
         SquareIconButton(
             imageProvider = ImageProvider(icon),
             contentDescription = label,
-            onClick = playPauseTrampolineAction(),
+            onClick = actionRunCallback<PlayPauseAction>(),
             modifier = GlanceModifier.size(sizeDp.dp)
         )
     }
@@ -509,7 +509,7 @@ class StepcastMiniWidget : GlanceAppWidget() {
                                 }
                             ),
                             contentDescription = if (state.isPlaying) "Pause" else "Play",
-                            onClick = playPauseTrampolineAction(),
+                            onClick = actionRunCallback<PlayPauseAction>(),
                             modifier = GlanceModifier.size(36.dp)
                         )
                     }
@@ -538,7 +538,7 @@ class StepcastPlayWidget : GlanceAppWidget() {
                         .fillMaxSize()
                         .background(widgetBackgroundColor(opacity))
                         .cornerRadius(24.dp)
-                        .clickable(playPauseTrampolineAction())
+                        .clickable(actionRunCallback<PlayPauseAction>())
                 ) {
                     Image(
                         provider = ImageProvider(
@@ -589,29 +589,18 @@ private fun EmptyWidget(opacity: Int) {
 // ---- actions ---------------------------------------------------------------
 
 /**
- * Play/pause goes through PlaybackTrampolineActivity (an activity start, not
- * a background broadcast): launcher widget PendingIntents carry no
- * foreground-service allowlist, so a play issued from a background callback
- * can't promote the service on Android 12+ and the tap silently dies. The
- * trampoline is foreground for the moment the command lands. Pause-only
- * commands (seek, done) stay on the broadcast path — they don't need FGS.
+ * Play/pause is a BROADCAST callback, not an activity start. It must be:
+ * activity PendingIntents fired from a lock-screen widget make the host
+ * demand an unlock first, no matter what showWhenLocked says — only
+ * broadcast taps fire while locked (One UI lock-screen widgets, verified
+ * on-device). The Android 12+ problem that originally forced the activity
+ * trampoline — launcher PendingIntents carry no FGS allowlist, so a play
+ * from a background callback can't promote the service — is solved inside
+ * [PlayPauseAction] instead: PAUSE goes through the bound controller
+ * (never needs FGS), and PLAY is dispatched as a system media key, the
+ * same pipeline Bluetooth buttons use, which carries the FGS exemption
+ * and revives a dead session via playback resumption.
  */
-@Composable
-internal fun playPauseTrampolineAction(): androidx.glance.action.Action {
-    val context = androidx.glance.LocalContext.current
-    return androidx.glance.appwidget.action.actionStartActivity(
-        android.content.Intent(
-            context,
-            com.stepcast.app.playback.PlaybackTrampolineActivity::class.java
-        )
-            .setData(android.net.Uri.parse("stepcast://widget/toggle"))
-            .putExtra("command", "TOGGLE")
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-    )
-}
-
-// Kept for reference/rollback; no longer wired to any button (see
-// playPauseTrampolineAction above for why).
 class PlayPauseAction : ActionCallback {
     override suspend fun onAction(
         context: Context,
@@ -619,9 +608,14 @@ class PlayPauseAction : ActionCallback {
         parameters: ActionParameters
     ) {
         var nowPlaying: Boolean? = null
-        sendPlayerCommand(context) {
-            nowPlaying = !it.isPlaying
-            if (it.isPlaying) it.pause() else it.play()
+        sendPlayerCommand(context) { controller ->
+            if (controller.isPlaying) {
+                nowPlaying = false
+                controller.pause()
+            } else {
+                nowPlaying = true
+                dispatchPlayMediaKey(context)
+            }
         }
         // flip the glyph immediately from this side of the tap — the
         // service's own publish converges the real state right after, but
@@ -632,6 +626,27 @@ class PlayPauseAction : ActionCallback {
             runCatching { updateAllStepcastWidgets(context) }
         }
     }
+}
+
+/**
+ * Starts playback by injecting KEYCODE_MEDIA_PLAY into the system media-key
+ * pipeline. The system delivers it to the most recent media session (ours,
+ * alive-and-paused, in every widget scenario — the widget shows our
+ * episode) WITH the temporary foreground-service allowance, or to the
+ * playback-resumption receiver after process death. Plain PLAY, not
+ * PLAY_PAUSE: if another app somehow holds media-key priority while
+ * playing, PLAY is a no-op there instead of pausing it.
+ */
+private fun dispatchPlayMediaKey(context: Context) {
+    val audioManager = context.applicationContext
+        .getSystemService(android.media.AudioManager::class.java) ?: return
+    val code = android.view.KeyEvent.KEYCODE_MEDIA_PLAY
+    audioManager.dispatchMediaKeyEvent(
+        android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code)
+    )
+    audioManager.dispatchMediaKeyEvent(
+        android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, code)
+    )
 }
 
 class SeekBackAction : ActionCallback {
