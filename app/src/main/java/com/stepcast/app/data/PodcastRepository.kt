@@ -101,7 +101,8 @@ class PodcastRepository(
         )
         if (podcast.autoQueue) newIds.forEach { addToQueueLast(it) }
         if (podcast.episodeCap > 0) {
-            db.episodeDao().pruneBeyondCap(podcastId, podcast.episodeCap)
+            val pruned = db.episodeDao().pruneBeyondCap(podcastId, podcast.episodeCap)
+            if (pruned > 0) PlaybackJournal.log("prune", "pod=$podcastId removed=$pruned")
         }
         if (isInitialImport) {
             db.episodeDao().setAutoDownloadEligibleForPodcast(podcastId, false)
@@ -160,7 +161,10 @@ class PodcastRepository(
         db.podcastDao().updateListPrefs(
             podcastId, episodeCap.coerceIn(0, 5000), sortOldestFirst, autoQueue
         )
-        if (episodeCap > 0) db.episodeDao().pruneBeyondCap(podcastId, episodeCap)
+        if (episodeCap > 0) {
+            val pruned = db.episodeDao().pruneBeyondCap(podcastId, episodeCap)
+            if (pruned > 0) PlaybackJournal.log("prune", "pod=$podcastId removed=$pruned")
+        }
     }
 
     suspend fun recordRefreshFailure(podcastId: Long) =
@@ -177,6 +181,7 @@ class PodcastRepository(
         val cutoff = System.currentTimeMillis() - days * 86_400_000L
         db.episodeDao().markPlayedOlderThan(podcastId, cutoff, System.currentTimeMillis())
         db.queueDao().removePlayed()
+        PlaybackJournal.log("bulk", "olderThan pod=$podcastId days=$days")
     }
 
     suspend fun markPlayedOlderThanInCategory(category: String, days: Int) {
@@ -185,6 +190,7 @@ class PodcastRepository(
             category, cutoff, System.currentTimeMillis()
         )
         db.queueDao().removePlayed()
+        PlaybackJournal.log("bulk", "olderThan folder=$category days=$days")
     }
 
     /** Per-podcast listening time accumulation (see ListenStats). */
@@ -968,16 +974,26 @@ class PodcastRepository(
 
     // ---- playback support -----------------------------------------------
 
-    suspend fun savePosition(episodeId: Long, positionMs: Long, durationMs: Long) {
+    suspend fun savePosition(
+        episodeId: Long,
+        positionMs: Long,
+        durationMs: Long,
+        source: String = "save"
+    ) {
         db.episodeDao().updatePosition(episodeId, positionMs.coerceAtLeast(0))
-        if (durationMs > 0) db.episodeDao().updateDurationIfUnknown(episodeId, durationMs)
+        // the player's duration is authoritative for the loaded file: it
+        // corrects a lying feed value (wrong units, placeholders), which
+        // otherwise poisons the near-end resume guard forever
+        if (durationMs > 0) db.episodeDao().correctDuration(episodeId, durationMs)
+        PlaybackJournal.log("pos", "$source ep=$episodeId pos=$positionMs dur=$durationMs")
     }
 
     /** "Finished" mark used by completion and done-and-delete paths. */
-    suspend fun markPlayed(episodeId: Long) {
+    suspend fun markPlayed(episodeId: Long, source: String = "ui") {
         val wasPlayed = db.episodeDao().get(episodeId)?.played ?: false
         db.episodeDao().setPlayed(episodeId, true, System.currentTimeMillis())
         if (!wasPlayed) ListenStats.addFinishedEpisode(appContext)
+        PlaybackJournal.log("played", "$source ep=$episodeId")
     }
 
     suspend fun introSkipMsFor(episodeId: Long): Long = skipMsFor(episodeId, intro = true)
@@ -1006,23 +1022,66 @@ class PodcastRepository(
     )
 
     /** Returns the number of genuinely new rows (conflicts are ignored). */
-    private suspend fun insertEpisodes(podcastId: Long, feed: ParsedFeed): Int {
-        // OnConflict IGNORE keeps existing rows (and their playback position)
-        val added = db.episodeDao()
-            .insertAll(feed.episodes.map { it.toEntity(podcastId) })
-            .count { it != -1L }
-        backfillTranscripts(podcastId, feed)
-        return added
-    }
+    private suspend fun insertEpisodes(podcastId: Long, feed: ParsedFeed): Int =
+        insertEpisodesReturningIds(podcastId, feed).size
 
-    /** Like [insertEpisodes] but returns the NEW episodes' row ids. */
+    /**
+     * Feed insert that survives identity churn. Dedup is keyed on guid
+     * (falling back to the enclosure URL at parse time) — but feeds CHANGE
+     * both across fetches (rotating tracking prefixes, ad-insertion tokens,
+     * CMS migrations). Naive insert-IGNORE then re-creates the same episode
+     * as a fresh row with positionMs = 0 / played = false, and a SmartPlay
+     * that picks the fresh twin looks exactly like "my episode started
+     * over". So: rows whose guid vanished from the feed get REKEYED to the
+     * matching parsed item (same enclosure URL, or same title + pubDate)
+     * instead of duplicated — keeping position, played state, and download.
+     * A sweep then removes progress-less shadow duplicates from before this
+     * defense existed. Returns the genuinely-NEW episodes' row ids.
+     */
     private suspend fun insertEpisodesReturningIds(
         podcastId: Long,
         feed: ParsedFeed
     ): List<Long> {
-        val ids = db.episodeDao()
-            .insertAll(feed.episodes.map { it.toEntity(podcastId) })
-            .filter { it != -1L }
+        val dao = db.episodeDao()
+        val existing = dao.listForPodcast(podcastId)
+        val knownGuids = existing.mapTo(HashSet()) { it.guid }
+        val parsedGuids = feed.episodes.mapTo(HashSet()) { it.guid }
+        // progress-carrying rows claim their new identity first, so a
+        // resumable row never loses a rekey match to an untouched twin
+        val orphaned = existing
+            .filter { it.guid !in parsedGuids }
+            .sortedWith(
+                compareByDescending<Episode> {
+                    it.positionMs > 0 || it.played ||
+                        it.downloadStatus != Episode.DOWNLOAD_NONE
+                }.thenBy { it.id }
+            )
+            .toMutableList()
+        val toInsert = mutableListOf<Episode>()
+        for (parsed in feed.episodes) {
+            val entity = parsed.toEntity(podcastId)
+            if (entity.guid in knownGuids) continue
+            val twin = orphaned.firstOrNull {
+                it.audioUrl == entity.audioUrl ||
+                    (entity.pubDateMs > 0 && it.pubDateMs == entity.pubDateMs &&
+                        it.title == entity.title)
+            }
+            if (twin != null) {
+                orphaned.remove(twin)
+                knownGuids += entity.guid
+                dao.rekeyEpisode(twin.id, entity.guid, entity.audioUrl)
+                PlaybackJournal.log(
+                    "rekey", "ep=${twin.id} pod=$podcastId pos=${twin.positionMs}"
+                )
+            } else if (knownGuids.add(entity.guid)) {
+                toInsert += entity
+            }
+        }
+        val ids = dao.insertAll(toInsert).filter { it != -1L }
+        val shadows = dao.deleteShadowDuplicates(podcastId)
+        if (shadows > 0) {
+            PlaybackJournal.log("dedup", "pod=$podcastId removed=$shadows")
+        }
         backfillTranscripts(podcastId, feed)
         return ids
     }

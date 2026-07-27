@@ -199,8 +199,17 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   against URLs another subscription already uses.
 - **Last refreshed** relative timestamp on every podcast screen.
 - **Hidden diagnostics**: long-press the Settings footer for counts,
-  stalest feeds, widget state, active station, crash-file presence.
+  stalest feeds, widget state, active station, crash-file presence — plus
+  a **Share journal** button for the playback-position journal (every
+  position save, played mark, row rekey/prune, and timeline swap, with
+  its source), so "my episode started over" reports carry evidence.
 - **Crash capture** with a share-report row in Settings.
+- **Episode identity survives feed churn**: when a feed changes an
+  episode's guid or enclosure URL (rotating tracking prefixes,
+  ad-insertion tokens, CMS migrations), the existing row is rekeyed to
+  the new identity instead of duplicated — playback position, played
+  state, and downloads survive. Progress-less shadow duplicates from
+  before this defense are swept on refresh.
 
 ## Feeds & refresh
 
@@ -257,6 +266,10 @@ opacity/background setting (including fully transparent):
 - **Mini** — artwork tile with play/pause.
 - **Play button** — 1x1 play/pause only.
 - **SmartPlays** — one-tap SmartPlay starters.
+
+Playback buttons (play/pause, SmartPlay starts) work from **lock-screen
+widgets without unlocking** — the invisible relay they route through is
+allowed over the keyguard.
 
 ## Notifications, lock screen, Auto
 

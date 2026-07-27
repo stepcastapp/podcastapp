@@ -197,6 +197,45 @@ interface EpisodeDao {
     @Query("UPDATE episodes SET durationMs = :durationMs WHERE id = :id AND durationMs <= 0")
     suspend fun updateDurationIfUnknown(id: Long, durationMs: Long)
 
+    /**
+     * The player's duration for the loaded file is authoritative — it
+     * OVERWRITES a lying feed value, not just fills a missing one (the 2s
+     * band avoids a dirty write, and Room invalidation, on every save).
+     */
+    @Query(
+        "UPDATE episodes SET durationMs = :durationMs WHERE id = :id " +
+            "AND ABS(durationMs - :durationMs) > 2000"
+    )
+    suspend fun correctDuration(id: Long, durationMs: Long)
+
+    /**
+     * Adopts a feed item's new identity for an existing row. Feeds churn
+     * guids and enclosure URLs (tracking prefixes, ad-insertion tokens);
+     * without this the same episode re-inserts as a fresh row with
+     * positionMs = 0 — which reads as "my episode lost its place".
+     */
+    @Query("UPDATE episodes SET guid = :guid, audioUrl = :audioUrl WHERE id = :id")
+    suspend fun rekeyEpisode(id: Long, guid: String, audioUrl: String)
+
+    /**
+     * Deletes progress-less duplicate rows created by past guid churn: same
+     * title + pubDate as another row that either carries progress (position,
+     * played mark, download) or is simply older. Downloads and queued rows
+     * are never touched. Returns how many rows were removed.
+     */
+    @Query(
+        "DELETE FROM episodes WHERE podcastId = :podcastId " +
+            "AND played = 0 AND positionMs = 0 AND downloadStatus = 0 " +
+            "AND pubDateMs > 0 " +
+            "AND id NOT IN (SELECT episodeId FROM queue) " +
+            "AND EXISTS (SELECT 1 FROM episodes e2 WHERE " +
+            "e2.podcastId = episodes.podcastId AND e2.id != episodes.id " +
+            "AND e2.title = episodes.title AND e2.pubDateMs = episodes.pubDateMs " +
+            "AND (e2.positionMs > 0 OR e2.played = 1 OR e2.downloadStatus != 0 " +
+            "OR e2.id < episodes.id))"
+    )
+    suspend fun deleteShadowDuplicates(podcastId: Long): Int
+
     @Query(
         "UPDATE episodes SET played = :played, positionMs = 0, " +
             "playedAtMs = :playedAtMs WHERE id = :id"
@@ -285,7 +324,7 @@ interface EpisodeDao {
             "AND id NOT IN (SELECT id FROM episodes WHERE podcastId = :podcastId " +
             "ORDER BY pubDateMs DESC LIMIT :cap)"
     )
-    suspend fun pruneBeyondCap(podcastId: Long, cap: Int)
+    suspend fun pruneBeyondCap(podcastId: Long, cap: Int): Int
 
     @Query(
         "UPDATE episodes SET played = 1, positionMs = 0, playedAtMs = :playedAtMs " +

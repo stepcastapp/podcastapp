@@ -29,6 +29,7 @@ class StepcastApplication : Application(), coil.ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         installCrashCapture()
+        com.stepcast.app.data.PlaybackJournal.init(this)
         com.stepcast.app.data.AppSettings.init(this)
         com.stepcast.app.data.ListenStats.init(this)
         com.stepcast.app.ui.theme.ThemePrefs.init(this)

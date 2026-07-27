@@ -29,7 +29,9 @@ import com.stepcast.app.data.ListenStats
 import com.stepcast.app.ui.MainActivity
 import com.stepcast.app.data.Chapter
 import com.stepcast.app.data.Episode
+import com.stepcast.app.data.PlaybackJournal
 import com.stepcast.app.data.Podcast
+import com.stepcast.app.data.resumeStartMs
 import com.stepcast.app.widget.StepcastWidget
 import com.stepcast.app.widget.updateAllStepcastWidgets
 import kotlinx.coroutines.CoroutineScope
@@ -112,7 +114,7 @@ class PlaybackService : MediaLibraryService() {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying) startTicker() else {
                     stopTicker()
-                    persistPosition()
+                    persistPosition("pause")
                 }
                 publishWidgetState()
             }
@@ -122,7 +124,7 @@ class PlaybackService : MediaLibraryService() {
                     currentEpisodeId()?.let { id ->
                         serviceScope.launch {
                             withContext(Dispatchers.IO) {
-                                app.repository.markPlayed(id)
+                                app.repository.markPlayed(id, "ended")
                             }
                             maybeContinueCurrentShow(id)
                         }
@@ -301,7 +303,7 @@ class PlaybackService : MediaLibraryService() {
         val episodeId = player.currentMediaItem?.mediaId?.toLongOrNull() ?: return
         if (player.hasNextMediaItem()) player.seekToNextMediaItem() else player.pause()
         serviceScope.launch(Dispatchers.IO) {
-            app.repository.markPlayed(episodeId)
+            app.repository.markPlayed(episodeId, "done-btn")
             app.repository.deleteDownload(episodeId)
         }
     }
@@ -374,6 +376,9 @@ class PlaybackService : MediaLibraryService() {
                     add(episodeToItem(episode))
                     tail.forEach { add(episodeToItem(it)) }
                 }
+                PlaybackJournal.log(
+                    "resume", "ep=${episode.id} pos=${episode.positionMs}"
+                )
                 MediaSession.MediaItemsWithStartPosition(
                     items, 0, episode.positionMs.coerceAtLeast(0)
                 )
@@ -694,7 +699,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
-        persistPosition()
+        persistPosition("destroy")
         stopTicker()
         stopShakeListener()
         sleepJob?.cancel()
@@ -844,13 +849,13 @@ class PlaybackService : MediaLibraryService() {
         tickerJob = null
     }
 
-    private fun persistPosition() {
+    private fun persistPosition(source: String = "tick") {
         val player = mediaSession?.player ?: return
         val episodeId = currentEpisodeId() ?: return
         val position = player.currentPosition
         val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0
         serviceScope.launch(Dispatchers.IO) {
-            app.repository.savePosition(episodeId, position, duration)
+            app.repository.savePosition(episodeId, position, duration, source)
         }
     }
 
@@ -881,7 +886,7 @@ class PlaybackService : MediaLibraryService() {
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
             previousId != null && previousId != episodeId
         ) {
-            app.repository.markPlayed(previousId)
+            app.repository.markPlayed(previousId, "auto-adv")
             if (sleepAtEpisodeEnd) {
                 sleepAtEpisodeEnd = false
                 mediaSession?.player?.pause()
@@ -911,18 +916,18 @@ class PlaybackService : MediaLibraryService() {
         val introMs = app.repository.introSkipMsFor(episodeId)
         val resumeMs = when (reason) {
             Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> {
-                val episode = app.repository.episode(episodeId)
-                val nearEnd = episode != null && episode.durationMs > 0 &&
-                    episode.positionMs >= episode.durationMs - 15_000
-                if (episode != null && !episode.played && !nearEnd) episode.positionMs else 0L
-            }
+            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK ->
+                app.repository.episode(episodeId)?.resumeStartMs() ?: 0L
             else -> 0L // explicit play() already passed the start position
         }
         val target = maxOf(introMs, resumeMs)
         if (target > 0 && player.currentPosition < target &&
             player.currentMediaItem?.mediaId == mediaItem.mediaId
         ) {
+            PlaybackJournal.log(
+                "raise",
+                "ep=$episodeId reason=$reason from=${player.currentPosition} to=$target"
+            )
             player.seekTo(target)
         }
 
@@ -1061,15 +1066,16 @@ class PlaybackService : MediaLibraryService() {
                 ?: return@future SessionResult(SessionResult.RESULT_ERROR_INVALID_STATE)
             // the outgoing episode's saved position is only as fresh as the
             // last 5s ticker tick — pin it exactly before the timeline swap
-            persistPosition()
+            persistPosition("swap-pin")
             // resume a half-listened head where it left off (C.TIME_UNSET
-            // restarted it from zero — "why did my episode start over?");
-            // same near-end guard as PlayerConnection so a nearly-finished
-            // episode doesn't instant-complete
+            // restarted it from zero — "why did my episode start over?")
             val head = episodes.first()
-            val nearEnd = head.durationMs > 0 &&
-                head.positionMs >= head.durationMs - 15_000
-            val startMs = if (head.played || nearEnd) 0L else head.positionMs
+            val startMs = head.resumeStartMs()
+            PlaybackJournal.log(
+                "smartplay",
+                "name=$name head=${head.id} dbPos=${head.positionMs} " +
+                    "dbDur=${head.durationMs} played=${head.played} start=$startMs"
+            )
             player.setMediaItems(
                 episodes.map { episodeToItem(it) }, 0, startMs
             )

@@ -425,6 +425,8 @@
     <string name="station">Station</string>
     <string name="station_hint">While it plays, the queue keeps refilling from these rules</string>
     <string name="diagnostics">Diagnostics</string>
+    <string name="share_playback_journal">Share journal</string>
+    <string name="journal_empty">Journal is empty — nothing has played since this build installed.</string>
     <string name="sort_name_asc">Name A→Z</string>
     <string name="sort_name_desc">Name Z→A</string>
     <string name="sort_oldest">Oldest first</string>

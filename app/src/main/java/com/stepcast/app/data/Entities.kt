@@ -118,6 +118,25 @@ data class Episode(
     }
 }
 
+/**
+ * Where playback should start for this episode: 0 for finished or
+ * genuinely-almost-finished rows (a start inside the last 15s would
+ * "complete" instantly and auto-advance), otherwise the saved position.
+ *
+ * The near-end check only trusts [Episode.durationMs] when the position
+ * actually lands NEAR the claimed end. Durations come from feeds, and feeds
+ * lie (wrong units, placeholder values); a position far PAST the claimed
+ * end means the duration is wrong — resume at the position instead of
+ * silently restarting the episode.
+ */
+fun Episode.resumeStartMs(): Long {
+    if (played || positionMs <= 0) return 0L
+    val nearEnd = durationMs > 0 &&
+        positionMs >= durationMs - 15_000 &&
+        positionMs <= durationMs + 60_000
+    return if (nearEnd) 0L else positionMs
+}
+
 /** Per-category settings: manual ordering and refresh cadence. */
 @Entity(tableName = "categories")
 data class CategoryMeta(

@@ -11,7 +11,9 @@ import androidx.media3.session.SessionToken
 import com.stepcast.app.StepcastApplication
 import com.stepcast.app.data.Chapter
 import com.stepcast.app.data.Episode
+import com.stepcast.app.data.PlaybackJournal
 import com.stepcast.app.data.Podcast
+import com.stepcast.app.data.resumeStartMs
 import com.stepcast.app.playback.PlaybackService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -288,7 +290,8 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
                     repository.savePosition(
                         outgoingId,
                         c.currentPosition,
-                        c.duration.takeIf { it > 0 } ?: 0
+                        c.duration.takeIf { it > 0 } ?: 0,
+                        source = "ui-pin"
                     )
                 }
             val interrupted = if (preserveInterrupted) {
@@ -309,11 +312,14 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
             repository.replaceQueue(upNext.map { it.id })
             val items = mutableListOf(mediaItemFor(episode, podcast))
             for (ep in upNext) items += mediaItemFor(ep, repository.podcast(ep.podcastId))
-            // a saved position within the last 15s would "complete" instantly
-            // and auto-advance — which reads as a random other episode starting
-            val nearEnd = episode.durationMs > 0 &&
-                episode.positionMs >= episode.durationMs - 15_000
-            val startMs = if (episode.played || nearEnd) 0L else episode.positionMs
+            // resume at the saved position; near-end/bogus-duration logic
+            // lives in resumeStartMs so every start path agrees
+            val startMs = episode.resumeStartMs()
+            PlaybackJournal.log(
+                "uiplay",
+                "ep=${episode.id} dbPos=${episode.positionMs} " +
+                    "dbDur=${episode.durationMs} start=$startMs"
+            )
             c.setMediaItems(items, 0, startMs)
             c.prepare()
             c.play()
@@ -360,7 +366,7 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
         val episodeId = c.currentMediaItem?.mediaId?.toLongOrNull() ?: return
         if (c.hasNextMediaItem()) c.seekToNextMediaItem() else c.pause()
         scope.launch {
-            repository.markPlayed(episodeId)
+            repository.markPlayed(episodeId, "done-ui")
             repository.deleteDownload(episodeId)
             pushState()
         }

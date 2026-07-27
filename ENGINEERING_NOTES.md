@@ -48,6 +48,12 @@ build or one confused on-device session.
   route through `PlaybackTrampolineActivity` (activity starts from
   widgets are always allowed; while it's resumed the promotion succeeds).
   Pause/seek/done can stay on the broadcast path.
+- **The keyguard blocks activities that broadcasts sailed past.** Moving
+  widget taps onto the trampoline silently broke lock-screen widgets: an
+  activity start under the keyguard prompts for unlock, while the old
+  broadcast path never did. Any invisible relay activity reachable from
+  a lock-screen surface needs `android:showWhenLocked="true"` (plus
+  `setShowWhenLocked(true)` at runtime for belt and braces).
 - **Responsive shrinking.** `SizeMode.Responsive` breakpoints keep the
   play/pause button alive as the bar widget shrinks (text drops <200dp,
   art drops <110dp); `minResizeWidth=40dp` allows 1-cell. Launchers cache
@@ -209,6 +215,21 @@ build or one confused on-device session.
 - org.json `optString()` returns the literal `"null"` for JSON null —
   never use it for nullable fields (poisoned restored folders once;
   `stringOrNull` helper since).
+- **Feeds churn episode identity.** Dedup is keyed on `(podcastId, guid)`
+  with the enclosure URL as guid fallback — and feeds rotate BOTH
+  (tracking prefixes, ad-insertion tokens, CMS migrations). Insert-IGNORE
+  alone then re-creates a half-listened episode as a fresh row with
+  `positionMs = 0`, which users report as "my episode started over".
+  Refresh rekeys orphaned rows to the matching parsed item (same URL, or
+  same title + pubDate) and sweeps progress-less shadow duplicates.
+- **Feed durations lie; the player's doesn't.** `itunes:duration` comes in
+  wrong units and placeholder values, and the near-end resume guard
+  divides by it. Position saves overwrite the stored duration with the
+  player's real one (`correctDuration`), and `resumeStartMs()` only
+  trusts "near end" when the position is actually NEAR the claimed end —
+  a position far past it means the duration is bogus, so resume anyway.
+  Every start path (service SmartPlay, UI play, auto-advance raise) goes
+  through the one helper so they can't disagree again.
 
 ## Resources / build / CI
 

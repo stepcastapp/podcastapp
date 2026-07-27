@@ -973,6 +973,28 @@ fun SettingsScreen(
                 TextButton(onClick = { diagnosticsOpen = false }) {
                     Text(stringResource(R.string.close))
                 }
+            },
+            dismissButton = {
+                // the position-write journal: who moved/erased playback
+                // positions and when — the evidence for "it started over"
+                TextButton(onClick = {
+                    val journal = com.stepcast.app.data.PlaybackJournal.snapshot()
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(
+                            android.content.Intent.EXTRA_TEXT,
+                            journal.ifEmpty {
+                                context.getString(R.string.journal_empty)
+                            }
+                        )
+                    context.startActivity(
+                        android.content.Intent.createChooser(
+                            send, context.getString(R.string.share_playback_journal)
+                        )
+                    )
+                }) {
+                    Text(stringResource(R.string.share_playback_journal))
+                }
             }
         )
     }
