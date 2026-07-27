@@ -1059,6 +1059,9 @@ class PlaybackService : MediaLibraryService() {
             )
             val player = mediaSession?.player
                 ?: return@future SessionResult(SessionResult.RESULT_ERROR_INVALID_STATE)
+            // the outgoing episode's saved position is only as fresh as the
+            // last 5s ticker tick — pin it exactly before the timeline swap
+            persistPosition()
             // resume a half-listened head where it left off (C.TIME_UNSET
             // restarted it from zero — "why did my episode start over?");
             // same near-end guard as PlayerConnection so a nearly-finished

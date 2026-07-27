@@ -280,6 +280,17 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
                 ).show()
                 return@launch
             }
+            // pin the outgoing episode's position at the exact swap moment —
+            // the service's 5s ticker can be up to one tick stale
+            c.currentMediaItem?.mediaId?.toLongOrNull()
+                ?.takeIf { it != episode.id }
+                ?.let { outgoingId ->
+                    repository.savePosition(
+                        outgoingId,
+                        c.currentPosition,
+                        c.duration.takeIf { it > 0 } ?: 0
+                    )
+                }
             val interrupted = if (preserveInterrupted) {
                 c.currentMediaItem?.mediaId?.toLongOrNull()
                     ?.takeIf { it != episode.id }
