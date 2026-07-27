@@ -35,6 +35,11 @@ class PlaybackTrampolineActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // lock-screen widget taps: run over the keyguard, no unlock required
+        // (manifest attr covers normal starts; this covers any edge path)
+        if (android.os.Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true)
+        }
         // A recreation must never replay the command (same stale-intent rule
         // as MainActivity) — with noHistory + excludeFromRecents this should
         // not happen, but guard anyway.

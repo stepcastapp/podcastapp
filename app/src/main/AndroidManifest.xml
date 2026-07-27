@@ -52,12 +52,16 @@
         <!-- invisible relay for widget playback taps: an activity start is the
              only widget-tap path that reliably lets the service go foreground
              on Android 12+ (launcher PendingIntents carry no FGS allowlist) -->
+        <!-- showWhenLocked: lock-screen widgets must play/pause without an
+             unlock — an activity is keyguard-blocked by default, unlike the
+             old broadcast path this trampoline replaced -->
         <activity
             android:name=".playback.PlaybackTrampolineActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity=""
+            android:showWhenLocked="true"
             android:theme="@style/Theme.Stepcast.Trampoline" />
 
         <!-- per-widget settings (opacity), reachable via widget reconfigure -->
