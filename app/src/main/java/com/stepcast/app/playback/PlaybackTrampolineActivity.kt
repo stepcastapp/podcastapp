@@ -54,6 +54,16 @@ class PlaybackTrampolineActivity : ComponentActivity() {
             finish()
             return
         }
+        // journal the tap context — a lock-screen start that dies here (host
+        // never launched us, or the command timed out) is invisible without it
+        val locked = runCatching {
+            getSystemService(android.app.KeyguardManager::class.java)
+                ?.isKeyguardLocked
+        }.getOrNull()
+        com.stepcast.app.data.PlaybackJournal.log(
+            "trampoline",
+            "smartplay=$smartPlay id=$smartPlayId cmd=$command locked=$locked"
+        )
         lifecycleScope.launch {
             try {
                 val token = SessionToken(
@@ -84,7 +94,11 @@ class PlaybackTrampolineActivity : ComponentActivity() {
                             )
                             // stay resumed (= app foreground) until the service
                             // has queued AND started playback
-                            withTimeoutOrNull(8_000) { future.await() }
+                            val result = withTimeoutOrNull(8_000) { future.await() }
+                            com.stepcast.app.data.PlaybackJournal.log(
+                                "trampoline",
+                                "result=" + (result?.resultCode?.toString() ?: "timeout")
+                            )
                         }
                         command == "TOGGLE" -> {
                             val nowPlaying = !controller.isPlaying

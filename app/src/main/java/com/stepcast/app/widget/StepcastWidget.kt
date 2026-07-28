@@ -704,6 +704,10 @@ class PlayPauseAction : ActionCallback {
                 actuallyPlaying = controller.isPlaying
             }
             if (!actuallyPlaying) {
+                // the direct evidence for "widget play did nothing"
+                com.stepcast.app.data.PlaybackJournal.log(
+                    "mediakey", "play dispatched but not playing after 1.5s"
+                )
                 prefs.edit().putBoolean(StepcastWidget.KEY_PLAYING, false).apply()
                 runCatching { updateAllStepcastWidgets(context) }
             }
@@ -721,6 +725,7 @@ class PlayPauseAction : ActionCallback {
  * playing, PLAY is a no-op there instead of pausing it.
  */
 internal fun dispatchPlayMediaKey(context: Context) {
+    com.stepcast.app.data.PlaybackJournal.log("mediakey", "dispatch PLAY")
     val audioManager = context.applicationContext
         .getSystemService(android.media.AudioManager::class.java) ?: return
     val code = android.view.KeyEvent.KEYCODE_MEDIA_PLAY

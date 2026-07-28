@@ -131,7 +131,42 @@ class PlaybackService : MediaLibraryService() {
                     stopTicker()
                     persistPosition("pause")
                 }
+                PlaybackJournal.log(
+                    "playing",
+                    "value=$isPlaying state=${player.playbackState} " +
+                        "pwr=${player.playWhenReady} " +
+                        "suppress=${player.playbackSuppressionReason}"
+                )
                 publishWidgetState()
+            }
+
+            // The three signals that explain every "it queued but never
+            // played" report: WHO flipped playWhenReady off (an FGS-denied
+            // start surfaces as a pause right after play; focus loss and
+            // becoming-noisy have their own reason codes), whether playback
+            // is suppressed (transient focus loss), and stream errors.
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                PlaybackJournal.log(
+                    "pwr",
+                    "value=$playWhenReady reason=${pwrReasonName(reason)} " +
+                        "state=${player.playbackState}"
+                )
+            }
+
+            override fun onPlaybackSuppressionReasonChanged(
+                playbackSuppressionReason: Int
+            ) {
+                PlaybackJournal.log(
+                    "suppress", suppressionName(playbackSuppressionReason)
+                )
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                PlaybackJournal.log(
+                    "error",
+                    "${error.errorCodeName} ep=${currentEpisodeId()} " +
+                        (error.message ?: "")
+                )
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -833,6 +868,22 @@ class PlaybackService : MediaLibraryService() {
     private fun currentEpisodeId(): Long? =
         mediaSession?.player?.currentMediaItem?.mediaId?.toLongOrNull()
 
+    private fun pwrReasonName(reason: Int): String = when (reason) {
+        Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "user"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "focus-loss"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "noisy"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end-of-item"
+        else -> "reason-$reason"
+    }
+
+    private fun suppressionName(reason: Int): String = when (reason) {
+        Player.PLAYBACK_SUPPRESSION_REASON_NONE -> "none"
+        Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS ->
+            "transient-focus-loss"
+        else -> "reason-$reason"
+    }
+
     /** Mirrors now-playing state into prefs and refreshes the home widget. */
     private fun publishWidgetState() {
         val player = mediaSession?.player ?: return
@@ -1261,14 +1312,30 @@ class PlaybackService : MediaLibraryService() {
             val startMs = head.resumeStartMs()
             PlaybackJournal.log(
                 "smartplay",
-                "name=$name head=${head.id} dbPos=${head.positionMs} " +
-                    "dbDur=${head.durationMs} played=${head.played} start=$startMs"
+                "name=$name queued=${episodes.size} head=${head.id} " +
+                    "dbPos=${head.positionMs} dbDur=${head.durationMs} " +
+                    "played=${head.played} start=$startMs"
             )
             player.setMediaItems(
                 episodes.map { episodeToItem(it) }, 0, startMs
             )
             player.prepare()
             player.play()
+            // outcome probe: two seconds later, did playback actually begin?
+            // A start killed by the FGS wall, focus denial, or a stream
+            // error shows up here with the state that explains it — this
+            // line IS the "queued but didn't play" diagnostic.
+            serviceScope.launch {
+                delay(2_000)
+                val p = mediaSession?.player ?: return@launch
+                PlaybackJournal.log(
+                    "smartplay-outcome",
+                    "name=$name playing=${p.isPlaying} " +
+                        "state=${p.playbackState} pwr=${p.playWhenReady} " +
+                        "suppress=${p.playbackSuppressionReason} " +
+                        "ep=${currentEpisodeId()}"
+                )
+            }
             SessionResult(SessionResult.RESULT_SUCCESS)
         }
 

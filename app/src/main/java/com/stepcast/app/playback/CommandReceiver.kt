@@ -75,6 +75,11 @@ class CommandReceiver : BroadcastReceiver() {
         action: String,
         smartPlayName: String?
     ) {
+        com.stepcast.app.data.PlaybackJournal.log(
+            "automation",
+            "action=${action.substringAfterLast('.')}" +
+                (smartPlayName?.let { " name=$it" } ?: "")
+        )
         if (action == ACTION_START_SMART_PLAY) {
             // ONE custom command; the service queues AND starts playback
             // entirely on its side. The old approach (setMediaItems with
@@ -147,7 +152,11 @@ class CommandReceiver : BroadcastReceiver() {
                 // queue fill + play) before releasing the controller — releasing
                 // the last client mid-start can let the OS destroy the service
                 // and playback never begins. Bounded so a broadcast can't hang.
-                withTimeoutOrNull(8_000) { future.await() }
+                val result = withTimeoutOrNull(8_000) { future.await() }
+                com.stepcast.app.data.PlaybackJournal.log(
+                    "automation",
+                    "result=" + (result?.resultCode?.toString() ?: "timeout")
+                )
             } else {
                 delay(300) // transport-only command; let it dispatch
             }

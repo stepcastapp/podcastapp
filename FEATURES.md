@@ -200,9 +200,14 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 - **Last refreshed** relative timestamp on every podcast screen.
 - **Hidden diagnostics**: long-press the Settings footer for counts,
   stalest feeds, widget state, active station, crash-file presence — plus
-  a **Share journal** button for the playback-position journal (every
-  position save, played mark, row rekey/prune, and timeline swap, with
-  its source), so "my episode started over" reports carry evidence.
+  a **Share journal** button for the playback journal: every position
+  save, played mark, row rekey/prune, and timeline swap with its source —
+  plus the full start lifecycle (who requested play, play-when-ready
+  flips with their reason, audio-focus suppression, player errors,
+  widget/automation/lock-screen tap context, and a 2-second
+  "did it actually start?" outcome probe after every SmartPlay). One
+  share answers both "my episode started over" and "it queued but never
+  played".
 - **Crash capture** with a share-report row in Settings.
 - **Episode metadata stays fresh**: refresh adopts corrected titles,
   show notes, artwork, durations, and late-added chapters for episodes
