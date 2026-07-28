@@ -73,6 +73,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG gates the destructive-migration fallback
+        buildConfig = true
     }
 }
 

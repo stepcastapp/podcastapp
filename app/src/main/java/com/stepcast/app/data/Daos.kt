@@ -30,6 +30,58 @@ interface PodcastDao {
     @Update
     suspend fun update(podcast: Podcast)
 
+    /**
+     * Feed-derived columns ONLY. Never write back a whole row that was
+     * read before a multi-second network fetch — any setting the user
+     * changed during the fetch (retention, schedule rule, speed, …) would
+     * be silently reverted. Empty strings keep the existing value, so a
+     * partially-parsed feed can't blank a good title or description.
+     */
+    @Query(
+        "UPDATE podcasts SET " +
+            "title = CASE WHEN :title = '' THEN title ELSE :title END, " +
+            "description = CASE WHEN :description = '' THEN description ELSE :description END, " +
+            "imageUrl = COALESCE(:imageUrl, imageUrl), " +
+            "author = CASE WHEN :author = '' THEN author ELSE :author END, " +
+            "lastRefreshed = :lastRefreshed, consecutiveFailures = 0 " +
+            "WHERE id = :id"
+    )
+    suspend fun updateFromFeed(
+        id: Long,
+        title: String,
+        description: String,
+        imageUrl: String?,
+        author: String,
+        lastRefreshed: Long
+    )
+
+    /** Local-folder rescan bookkeeping — same narrow-write rule as above. */
+    @Query(
+        "UPDATE podcasts SET lastRefreshed = :lastRefreshed, " +
+            "imageUrl = COALESCE(imageUrl, :fallbackArt) WHERE id = :id"
+    )
+    suspend fun updateLocalScan(id: Long, lastRefreshed: Long, fallbackArt: String?)
+
+    /** Dead-feed repair: repoint + adopt the new feed's metadata, narrowly. */
+    @Query(
+        "UPDATE podcasts SET feedUrl = :feedUrl, " +
+            "title = CASE WHEN :title = '' THEN title ELSE :title END, " +
+            "description = CASE WHEN :description = '' THEN description ELSE :description END, " +
+            "imageUrl = COALESCE(:imageUrl, imageUrl), " +
+            "author = CASE WHEN :author = '' THEN author ELSE :author END, " +
+            "lastRefreshed = :lastRefreshed, consecutiveFailures = 0 " +
+            "WHERE id = :id"
+    )
+    suspend fun repoint(
+        id: Long,
+        feedUrl: String,
+        title: String,
+        description: String,
+        imageUrl: String?,
+        author: String,
+        lastRefreshed: Long
+    )
+
     @Query("UPDATE podcasts SET introSkipSec = :introSec, outroSkipSec = :outroSec WHERE id = :id")
     suspend fun updateSkips(id: Long, introSec: Int, outroSec: Int)
 
@@ -220,8 +272,13 @@ interface EpisodeDao {
     /**
      * Deletes progress-less duplicate rows created by past guid churn: same
      * title + pubDate as another row that either carries progress (position,
-     * played mark, download) or is simply older. Downloads and queued rows
-     * are never touched. Returns how many rows were removed.
+     * played mark, download) or is simply older. Two guards keep it from
+     * eating REAL episodes: the twin must be corroborated by a matching
+     * enclosure URL or a matching known duration (serials/multi-part drops
+     * legitimately share title + timestamp), and it runs BEFORE the
+     * refresh insert so a just-inserted row can't be deleted after its id
+     * was already reported as new. Downloads and queued rows are never
+     * touched. Returns how many rows were removed.
      */
     @Query(
         "DELETE FROM episodes WHERE podcastId = :podcastId " +
@@ -231,6 +288,8 @@ interface EpisodeDao {
             "AND EXISTS (SELECT 1 FROM episodes e2 WHERE " +
             "e2.podcastId = episodes.podcastId AND e2.id != episodes.id " +
             "AND e2.title = episodes.title AND e2.pubDateMs = episodes.pubDateMs " +
+            "AND (e2.audioUrl = episodes.audioUrl " +
+            "OR (e2.durationMs > 0 AND e2.durationMs = episodes.durationMs)) " +
             "AND (e2.positionMs > 0 OR e2.played = 1 OR e2.downloadStatus != 0 " +
             "OR e2.id < episodes.id))"
     )

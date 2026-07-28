@@ -96,6 +96,9 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
                 val body = response.body ?: throw IOException("Empty body")
                 val total = body.contentLength()
+                // first byte is flowing: 1% moves the row from "Waiting"
+                // to "Downloading" in the downloads screen immediately
+                repository.setDownloadProgress(episodeId, 1)
                 var written = 0L
                 var lastPct = -1
                 body.byteStream().use { input ->
@@ -120,6 +123,13 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                             }
                         }
                     }
+                }
+                // A dropped connection can end the stream cleanly at 60% —
+                // recording that as DONE yields a file that plays and "ends"
+                // early (and then teaches the DB a wrong duration). When the
+                // server declared a length, hold it to it.
+                if (total > 0 && written < total) {
+                    throw IOException("truncated download: $written of $total bytes")
                 }
             }
             repository.setDownloaded(episodeId, file.absolutePath)

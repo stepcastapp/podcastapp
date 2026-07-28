@@ -193,7 +193,15 @@ abstract class StepcastDatabase : RoomDatabase() {
                         MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
                         MIGRATION_18_19
                     )
-                    .fallbackToDestructiveMigration()
+                    // Destructive fallback ONLY in debug builds. In release,
+                    // a missing migration or schema-hash mismatch must crash
+                    // (fixable with an update) — never silently delete the
+                    // user's subscriptions, positions, and download records.
+                    .apply {
+                        if (com.stepcast.app.BuildConfig.DEBUG) {
+                            fallbackToDestructiveMigration()
+                        }
+                    }
                     .build().also { instance = it }
             }
     }

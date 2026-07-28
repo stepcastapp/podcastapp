@@ -56,7 +56,7 @@ class PodcastRepository(
             return@withContext existingId
         }
         val feed = prefetched ?: fetchFeed(feedUrl)
-        val id = db.podcastDao().insert(
+        val id = insertPodcastOrExisting(
             Podcast(
                 feedUrl = feedUrl,
                 title = feed.title,
@@ -89,15 +89,14 @@ class PodcastRepository(
         val isInitialImport = podcast.lastRefreshed == 0L
         val feed = fetchFeed(podcast.feedUrl)
         val newIds = insertEpisodesReturningIds(podcastId, feed)
-        db.podcastDao().update(
-            podcast.copy(
-                title = feed.title,
-                description = feed.description,
-                imageUrl = feed.imageUrl ?: podcast.imageUrl,
-                author = feed.author.ifEmpty { podcast.author },
-                lastRefreshed = System.currentTimeMillis(),
-                consecutiveFailures = 0
-            )
+        db.podcastDao().updateFromFeed(
+            podcastId,
+            // the parser's placeholder must never replace a real title
+            title = feed.title.takeIf { it != "(untitled feed)" }.orEmpty(),
+            description = feed.description,
+            imageUrl = feed.imageUrl,
+            author = feed.author,
+            lastRefreshed = System.currentTimeMillis()
         )
         if (podcast.autoQueue) newIds.forEach { addToQueueLast(it) }
         if (podcast.episodeCap > 0) {
@@ -304,7 +303,7 @@ class PodcastRepository(
         }
         val root = DocumentFile.fromTreeUri(appContext, treeUri)
             ?: throw IOException("Cannot open folder")
-        val id = db.podcastDao().insert(
+        val id = insertPodcastOrExisting(
             Podcast(
                 feedUrl = key,
                 title = root.name ?: "Local folder",
@@ -401,12 +400,10 @@ class PodcastRepository(
                 java.io.File(artDir, "${episode.id}.jpg").delete()
             }
         }
-        db.podcastDao().update(
-            podcast.copy(
-                lastRefreshed = System.currentTimeMillis(),
-                // the folder itself takes the first embedded art found
-                imageUrl = podcast.imageUrl ?: folderArt
-            )
+        // narrow write: the SAF walk above can take a while, and a stale
+        // full-row update would revert settings edited meanwhile
+        db.podcastDao().updateLocalScan(
+            podcast.id, System.currentTimeMillis(), folderArt
         )
         return added
     }
@@ -743,7 +740,7 @@ class PodcastRepository(
             if (cleanFolder != null) addToCategory(existing.id, cleanFolder)
             return existing.id
         }
-        val id = db.podcastDao().insert(
+        val id = insertPodcastOrExisting(
             Podcast(
                 feedUrl = feedUrl,
                 title = title.ifBlank { feedUrl },
@@ -756,6 +753,19 @@ class PodcastRepository(
         )
         cleanFolder?.let { addToCategory(id, it) }
         return id
+    }
+
+    /**
+     * IGNORE-insert returns -1 on a feedUrl unique-index conflict — which
+     * happens for real (concurrent OPML subscribes, an import racing a
+     * refresh). Using -1 as a podcast id used to scatter orphan episode
+     * rows under podcastId = -1; resolve to the winner's id instead.
+     */
+    private suspend fun insertPodcastOrExisting(podcast: Podcast): Long {
+        val id = db.podcastDao().insert(podcast)
+        if (id > 0) return id
+        return db.podcastDao().getByFeedUrl(podcast.feedUrl)?.id
+            ?: throw IOException("insert lost a race and no row exists for ${podcast.feedUrl}")
     }
 
     /** Per-show refresh rule (see ScheduleEngine.MODE_*). */
@@ -1077,11 +1087,14 @@ class PodcastRepository(
                 toInsert += entity
             }
         }
-        val ids = dao.insertAll(toInsert).filter { it != -1L }
+        // sweep BEFORE inserting: a row inserted this refresh must never be
+        // deleted after its id was already collected as "new" (phantom
+        // queue entries / notifications about episodes that don't exist)
         val shadows = dao.deleteShadowDuplicates(podcastId)
         if (shadows > 0) {
             PlaybackJournal.log("dedup", "pod=$podcastId removed=$shadows")
         }
+        val ids = dao.insertAll(toInsert).filter { it != -1L }
         backfillTranscripts(podcastId, feed)
         return ids
     }
@@ -1159,16 +1172,14 @@ class PodcastRepository(
             val podcast = db.podcastDao().get(podcastId)
                 ?: throw IOException("podcast $podcastId is gone")
             val feed = fetchFeed(newFeedUrl)
-            db.podcastDao().update(
-                podcast.copy(
-                    feedUrl = newFeedUrl,
-                    title = feed.title.ifEmpty { podcast.title },
-                    description = feed.description.ifEmpty { podcast.description },
-                    imageUrl = feed.imageUrl ?: podcast.imageUrl,
-                    author = feed.author.ifEmpty { podcast.author },
-                    consecutiveFailures = 0,
-                    lastRefreshed = System.currentTimeMillis()
-                )
+            db.podcastDao().repoint(
+                podcastId,
+                feedUrl = newFeedUrl,
+                title = feed.title.takeIf { it != "(untitled feed)" }.orEmpty(),
+                description = feed.description,
+                imageUrl = feed.imageUrl,
+                author = feed.author,
+                lastRefreshed = System.currentTimeMillis()
             )
             insertEpisodes(podcastId, feed)
             autoManageDownloads(podcastId)

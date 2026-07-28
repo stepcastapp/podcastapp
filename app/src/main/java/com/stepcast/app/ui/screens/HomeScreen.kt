@@ -243,7 +243,10 @@ fun HomeScreen(
     if (bulkCategoryDialogOpen) {
         val categories = categoryMetas.map { it.name }
             .sortedWith(String.CASE_INSENSITIVE_ORDER)
-        var pickedCategory by remember { mutableStateOf("") }
+        // null = nothing chosen yet (Apply disabled); "" = the user
+        // EXPLICITLY chose "None" (remove all categories). Starting at ""
+        // used to make Apply silently uncategorize every selected show.
+        var pickedCategory by remember { mutableStateOf<String?>(null) }
         var newCategory by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { bulkCategoryDialogOpen = false },
@@ -260,7 +263,7 @@ fun HomeScreen(
                     LazyRow {
                         item {
                             FilterChip(
-                                selected = pickedCategory.isEmpty(),
+                                selected = pickedCategory == "",
                                 onClick = { pickedCategory = ""; newCategory = "" },
                                 label = { Text(stringResource(R.string.none)) }
                             )
@@ -278,7 +281,10 @@ fun HomeScreen(
                         value = newCategory,
                         onValueChange = { text ->
                             newCategory = text.take(40)
-                            pickedCategory = text.trim()
+                            // typing chooses the typed name; clearing the
+                            // field returns to "nothing chosen", it must
+                            // NOT silently become "remove all"
+                            pickedCategory = text.trim().ifEmpty { null }
                         },
                         label = { Text(stringResource(R.string.new_category)) },
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
@@ -293,15 +299,18 @@ fun HomeScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    bulkCategoryDialogOpen = false
-                    val ids = selected.toList()
-                    val category = pickedCategory
-                    selected.clear()
-                    scope.launch {
-                        ids.forEach { repository.setSingleCategory(it, category) }
+                TextButton(
+                    enabled = pickedCategory != null,
+                    onClick = {
+                        bulkCategoryDialogOpen = false
+                        val ids = selected.toList()
+                        val category = pickedCategory ?: return@TextButton
+                        selected.clear()
+                        scope.launch {
+                            ids.forEach { repository.setSingleCategory(it, category) }
+                        }
                     }
-                }) { Text(stringResource(R.string.apply)) }
+                ) { Text(stringResource(R.string.apply)) }
             },
             dismissButton = {
                 TextButton(onClick = { bulkCategoryDialogOpen = false }) { Text(stringResource(R.string.cancel)) }
