@@ -54,43 +54,43 @@ references are as of commit `ab06455` and drift as fixes land.
 
 ## Wave 3 — metadata, backup, feeds
 
-- [ ] Episode rows frozen at first insert: titles/notes/art/duration/
+- [x] Episode rows frozen at first insert: titles/notes/art/duration/
       chapters never updated from the feed; rekey adopts identity but not
       metadata.
-- [ ] Backup v2: schedule rules/checkpoints/quiet hours/station mode/
+- [x] Backup v2: schedule rules/checkpoints/quiet hours/station mode/
       ad-jump missing; restore resets settings absent from old files;
       restore half-merges existing shows and triggers cap pruning; dead
       refreshHours fields still round-tripped; optString null-title.
-- [ ] RSS dates: no ISO-8601 → pubDate 0 (invisible in inbox, first
+- [x] RSS dates: no ISO-8601 → pubDate 0 (invisible in inbox, first
       pruned, instantly "old"); one unknown HTML entity kills the whole
       feed; item title/guid take LAST occurrence not first.
-- [ ] Empty chapter fetch caches "" and destroys the json: URL pointer.
-- [ ] Auto-download slots starved by dead/dismissed enclosures
+- [x] Empty chapter fetch caches "" and destroys the json: URL pointer.
+- [x] Auto-download slots starved by dead/dismissed enclosures
       (take-before-filter).
-- [ ] SmartPlay rules sort AFTER a newest-500 LIMIT (oldest-first returns
+- [x] SmartPlay rules sort AFTER a newest-500 LIMIT (oldest-first returns
       the opposite of the ask on big scopes).
-- [ ] Manual refresh has no network constraint → offline refresh marks
+- [x] Manual refresh has no network constraint → offline refresh marks
       the whole library as failing.
-- [ ] Schedule edits never replan pending work (up to 6h stale).
-- [ ] Stats: bump-then-insert race drops deltas; unsubscribe leaks
+- [x] Schedule edits never replan pending work (up to 6h stale).
+- [x] Stats: bump-then-insert race drops deltas; unsubscribe leaks
       listen_stats row (rowid reuse inherits listening time) and local_art
       files; fixed-tick wall time under-reports; checkbox-played doesn't
       count as finished.
-- [ ] pruneBeyondCap deletes half-listened + played rows (history loss),
+- [x] pruneBeyondCap deletes half-listened + played rows (history loss),
       no tiebreaker.
-- [ ] searchByTitle: LIKE wildcards unescaped.
-- [ ] Release inference: linear median on minutes-of-day breaks
+- [x] searchByTitle: LIKE wildcards unescaped.
+- [x] Release inference: linear median on minutes-of-day breaks
       midnight-releasing shows (circular median).
-- [ ] Transactions: setCategories / renameCategory / deleteCategory /
+- [x] Transactions: setCategories / renameCategory / deleteCategory /
       unsubscribe / insertEpisodesReturningIds / reorder helpers commit
       row-by-row (torn states + N invalidations).
-- [ ] markPlayedOlderThan clears OTHER shows' played episodes from Up
+- [x] markPlayedOlderThan clears OTHER shows' played episodes from Up
       Next (global removePlayed).
-- [ ] autoQueue appends new episodes newest-first even for
+- [x] autoQueue appends new episodes newest-first even for
       sortOldestFirst shows.
-- [ ] Speed clamps disagree (per-show 0..4 vs global 0.5..3).
-- [ ] deleteCategory leaves empty SmartPlays in the strip/widget/shortcuts.
-- [ ] Inbox floor ignores subscription date (14 days of backlog lands in
+- [x] Speed clamps disagree (per-show 0..4 vs global 0.5..3).
+- [x] deleteCategory leaves empty SmartPlays in the strip/widget/shortcuts.
+- [x] Inbox floor ignores subscription date (14 days of backlog lands in
       "New" on subscribe).
 
 ## Wave 4 — UX pass

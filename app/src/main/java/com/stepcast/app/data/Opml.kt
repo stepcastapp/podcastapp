@@ -7,27 +7,65 @@ import java.io.InputStream
 /** Minimal OPML 2.0 read/write — the migration path in and out of the app. */
 object Opml {
 
-    /** Returns every feed URL found in outline/@xmlUrl, at any nesting depth. */
-    fun parse(stream: InputStream): List<String> {
+    /** One imported subscription: url + the outline folder it sat under. */
+    data class Entry(val url: String, val title: String?, val folder: String?)
+
+    /**
+     * Returns every feed found in outline/@xmlUrl, carrying the enclosing
+     * outline's name as its folder — our own export writes nested category
+     * outlines, and importing used to throw that structure away. Registers
+     * the same leaked-HTML-entity table as the feed parser, so an OPML with
+     * an &nbsp; in a title imports instead of "Imported 0 of 0 feeds".
+     */
+    fun parse(stream: InputStream): List<Entry> {
         val parser = Xml.newPullParser()
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+        parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
         parser.setInput(stream, null)
-        val urls = mutableListOf<String>()
+        RssParser.registerHtmlEntities(parser)
+        val entries = mutableListOf<Entry>()
+        // one stack frame per open <outline>: the folder name for
+        // containers, null for feed leaves
+        val folderStack = ArrayDeque<String?>()
         var event = parser.eventType
         while (event != XmlPullParser.END_DOCUMENT) {
-            if (event == XmlPullParser.START_TAG &&
-                parser.name.equals("outline", ignoreCase = true)
-            ) {
-                for (i in 0 until parser.attributeCount) {
-                    if (parser.getAttributeName(i).equals("xmlUrl", ignoreCase = true)) {
-                        val url = parser.getAttributeValue(i).trim()
-                        if (url.startsWith("http")) urls += url
+            when {
+                event == XmlPullParser.START_TAG &&
+                    parser.name.equals("outline", ignoreCase = true) -> {
+                    var xmlUrl: String? = null
+                    var text: String? = null
+                    for (i in 0 until parser.attributeCount) {
+                        when {
+                            parser.getAttributeName(i)
+                                .equals("xmlUrl", ignoreCase = true) ->
+                                xmlUrl = parser.getAttributeValue(i).trim()
+                            parser.getAttributeName(i)
+                                .equals("title", ignoreCase = true) && text == null ->
+                                text = parser.getAttributeValue(i).trim()
+                            parser.getAttributeName(i)
+                                .equals("text", ignoreCase = true) ->
+                                text = parser.getAttributeValue(i).trim()
+                        }
                     }
+                    if (xmlUrl != null && xmlUrl.startsWith("http")) {
+                        entries += Entry(
+                            url = xmlUrl,
+                            title = text?.takeIf { it.isNotEmpty() },
+                            folder = folderStack.lastOrNull { it != null }
+                        )
+                        folderStack.addLast(null)
+                    } else {
+                        folderStack.addLast(text?.takeIf { it.isNotEmpty() })
+                    }
+                }
+                event == XmlPullParser.END_TAG &&
+                    parser.name.equals("outline", ignoreCase = true) -> {
+                    folderStack.removeLastOrNull()
                 }
             }
             event = parser.next()
         }
-        return urls.distinct()
+        return entries.distinctBy { it.url }
     }
 
     fun serialize(

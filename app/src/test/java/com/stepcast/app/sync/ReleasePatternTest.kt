@@ -109,4 +109,33 @@ class ReleasePatternTest {
         assertEquals(3, ReleasePattern.isoDayOfWeek(at(8, 12), utc))  // Jul 8 2026 = Wed
         assertEquals(7, ReleasePattern.isoDayOfWeek(at(12, 12), utc)) // Jul 12 2026 = Sun
     }
+
+    @Test
+    fun `circular median lands near midnight for straddling times`() {
+        // 23:45, 23:50, 23:55, 00:05, 00:10, 00:15 — a linear median would
+        // report ~23:45 or drift toward noon depending on the split
+        val median = ReleasePattern.circularMedianMinutes(
+            listOf(1425, 1430, 1435, 5, 10, 15)
+        )
+        val toMidnight = minOf(median, 1440 - median)
+        assertTrue("median $median should sit near midnight", toMidnight <= 30)
+    }
+
+    @Test
+    fun `circular median matches plain median away from midnight`() {
+        assertEquals(390, ReleasePattern.circularMedianMinutes(listOf(380, 390, 400)))
+    }
+
+    @Test
+    fun `midnight-straddling daily show still gets a sane expectation`() {
+        // releases alternating 23:55 / 00:05 across midnight, daily
+        val dates = buildList {
+            for (d in 1..10) {
+                add(if (d % 2 == 0) at(d, 23, 55) else at(d, 0, 5))
+            }
+        }
+        val p = ReleasePattern.infer(dates, utc)
+        val toMidnight = minOf(p.minutesOfDay, 1440 - p.minutesOfDay)
+        assertTrue("minutesOfDay ${p.minutesOfDay} near midnight", toMidnight <= 60)
+    }
 }

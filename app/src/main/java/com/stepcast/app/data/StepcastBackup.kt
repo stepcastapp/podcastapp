@@ -54,17 +54,17 @@ object StepcastBackup {
 
     private suspend fun buildJson(repository: PodcastRepository): JSONObject {
         val root = JSONObject()
-        root.put("stepcast", 1)
+        root.put("stepcast", 2)
         root.put("exportedAt", System.currentTimeMillis())
 
         val categories = JSONArray()
         for (meta in repository.categoryMetaList()) {
+            // v2 dropped refreshHours/anchorMinutes: dead since the
+            // promise-based schedule replaced category cadences
             categories.put(
                 JSONObject()
                     .put("name", meta.name)
                     .put("sortOrder", meta.sortOrder)
-                    .put("refreshHours", meta.refreshHours)
-                    .put("anchorMinutes", meta.anchorMinutes)
             )
         }
         root.put("categories", categories)
@@ -92,6 +92,12 @@ object StepcastBackup {
                     .put("episodeCap", podcast.episodeCap)
                     .put("sortOldestFirst", podcast.sortOldestFirst)
                     .put("autoQueue", podcast.autoQueue)
+                    // v2: the per-show schedule rule and ad jump — restoring
+                    // onto a new phone used to silently revert every show
+                    // to Automatic
+                    .put("scheduleMode", podcast.scheduleMode)
+                    .put("scheduleParam", podcast.scheduleParam)
+                    .put("adJumpSec", podcast.adJumpSec)
             )
         }
         root.put("podcasts", podcasts)
@@ -115,7 +121,12 @@ object StepcastBackup {
                 )
             }
             smartPlays.put(
-                JSONObject().put("name", smartPlay.name).put("entries", entries)
+                JSONObject()
+                    .put("name", smartPlay.name)
+                    // v2: station mode + strip order survive a restore
+                    .put("continuous", smartPlay.continuous)
+                    .put("sortOrder", smartPlay.sortOrder)
+                    .put("entries", entries)
             )
         }
         root.put("smartPlays", smartPlays)
@@ -123,7 +134,6 @@ object StepcastBackup {
         root.put(
             "settings",
             JSONObject()
-                .put("defaultRefreshHours", AppSettings.defaultRefreshHours)
                 .put("defaultKeepDownloads", AppSettings.defaultKeepDownloads)
                 .put("seekBackSeconds", AppSettings.seekBackSeconds)
                 .put("seekForwardSeconds", AppSettings.seekForwardSeconds)
@@ -146,6 +156,20 @@ object StepcastBackup {
                 )
                 .put("customAccentArgb", ThemePrefs.customAccentArgb)
                 .put("customSecondaryArgb", ThemePrefs.customSecondaryArgb)
+                // v2: the schedule configuration itself
+                .put("checkpointTimes", AppSettings.checkpointTimes.joinToString(","))
+                .put(
+                    "checkpointEnabled",
+                    AppSettings.checkpointEnabled.joinToString(",") { if (it) "1" else "0" }
+                )
+                .put("quietHoursEnabled", AppSettings.quietHoursEnabled)
+                .put("quietStartMinutes", AppSettings.quietStartMinutes)
+                .put("quietEndMinutes", AppSettings.quietEndMinutes)
+                .put("notifyOnlyAtCheckpoints", AppSettings.notifyOnlyAtCheckpoints)
+                .put("continueCurrentShow", AppSettings.continueCurrentShow)
+                .put("notificationDoneButton", AppSettings.notificationDoneButton)
+                .put("categoryRefreshButtons", AppSettings.categoryRefreshButtons)
+                .put("libraryCompactList", AppSettings.libraryCompactList)
         )
         return root
     }
@@ -173,16 +197,35 @@ object StepcastBackup {
             }
         }
 
-        // podcasts
+        // podcasts. A feed that ALREADY exists locally keeps its local
+        // settings — the old behavior half-merged (stub kept local retention
+        // but skips/speed/categories were overwritten, and setListPrefs even
+        // pruned episodes of shows that weren't part of the restore).
+        // Existing shows only GAIN category memberships, additively.
         val podcasts = json.optJSONArray("podcasts") ?: JSONArray()
         val urlToId = HashMap<String, Long>()
         var feeds = 0
         for (i in 0 until podcasts.length()) {
             val entry = podcasts.optJSONObject(i) ?: continue
             val url = entry.stringOrNull("feedUrl") ?: continue
+            val backupCategories = buildList {
+                entry.stringOrNull("folder")?.let(::add)
+                entry.optJSONArray("categories")?.let { cats ->
+                    for (j in 0 until cats.length()) {
+                        cats.optString(j)?.takeIf { it.isNotBlank() }?.let(::add)
+                    }
+                }
+            }.distinct()
+            val existingId = repository.podcastIdForFeed(url)
+            if (existingId != null) {
+                backupCategories.forEach { repository.addToCategory(existingId, it) }
+                urlToId[url] = existingId
+                feeds++
+                continue
+            }
             val id = repository.importPodcastStub(
                 feedUrl = url,
-                title = entry.optString("title"),
+                title = entry.stringOrNull("title").orEmpty(),
                 imageUrl = entry.stringOrNull("imageUrl"),
                 folder = entry.stringOrNull("folder"),
                 keepDownloads = entry.optInt("keepDownloads", AppSettings.defaultKeepDownloads),
@@ -199,15 +242,15 @@ object StepcastBackup {
             )
             val speed = entry.optDouble("playbackSpeed", 0.0).toFloat()
             if (speed > 0f) repository.setPlaybackSpeed(id, speed)
-            // multi-category backups carry the full list; legacy files
-            // only had "folder", which importPodcastStub already applied
-            entry.optJSONArray("categories")?.let { cats ->
-                val names = buildList {
-                    for (j in 0 until cats.length()) {
-                        cats.optString(j)?.takeIf { it.isNotBlank() }?.let(::add)
-                    }
-                }
-                if (names.isNotEmpty()) repository.setCategories(id, names)
+            if (entry.has("scheduleMode")) {
+                repository.setScheduleRule(
+                    id, entry.optInt("scheduleMode", 0), entry.optInt("scheduleParam", 0)
+                )
+            }
+            val adJump = entry.optInt("adJumpSec", 0)
+            if (adJump > 0) repository.setAdJump(id, adJump)
+            if (backupCategories.isNotEmpty()) {
+                repository.setCategories(id, backupCategories)
             }
             urlToId[url] = id
             feeds++
@@ -242,40 +285,89 @@ object StepcastBackup {
                 }
             }
             if (entries.isNotEmpty()) {
-                repository.importSmartPlay(plan.optString("name", "SmartPlay"), entries)
+                val id = repository.importSmartPlay(
+                    plan.optString("name", "SmartPlay"), entries
+                )
+                if (plan.optBoolean("continuous", false)) {
+                    repository.setSmartPlayContinuous(id, true)
+                }
                 imported++
             }
         }
 
-        // settings
+        // settings — every key is has()-guarded: optX(key, default) can't
+        // tell "absent" from "explicit default", so restoring an OLDER
+        // backup used to factory-reset every setting the file predates
         json.optJSONObject("settings")?.let { s ->
-            AppSettings.setDefaultRefreshHours(context, s.optInt("defaultRefreshHours", 3))
-            AppSettings.setDefaultKeepDownloads(context, s.optInt("defaultKeepDownloads", 2))
-            AppSettings.setSeekBackSeconds(context, s.optInt("seekBackSeconds", 10))
-            AppSettings.setSeekForwardSeconds(context, s.optInt("seekForwardSeconds", 30))
-            AppSettings.setAdChapterAutoSkip(context, s.optBoolean("adChapterAutoSkip", true))
-            AppSettings.setNewEpisodeNotifications(
-                context, s.optBoolean("newEpisodeNotifications", true)
-            )
-            AppSettings.setDefaultPlaybackSpeed(
-                context, s.optDouble("defaultPlaybackSpeed", 1.0).toFloat()
-            )
-            AppSettings.setWifiOnlyDownloads(context, s.optBoolean("wifiOnlyDownloads", false))
-            AppSettings.setStreamWhenNotDownloaded(
-                context, s.optBoolean("streamWhenNotDownloaded", true)
-            )
-            AppSettings.setSkipSilence(context, s.optBoolean("skipSilence", false))
-            AppSettings.setSwipeQueueToTop(context, s.optBoolean("swipeQueueToTop", false))
-            AppSettings.setQueueNextAtBottom(context, s.optBoolean("queueNextAtBottom", false))
-            AppSettings.setWidgetOpacity(context, s.optInt("widgetOpacity", 100))
-            AppSettings.setSwipeRightAction(
-                context, s.optString("swipeRightAction", AppSettings.SWIPE_PLAYED)
-            )
-            AppSettings.setSwipeLeftAction(
-                context, s.optString("swipeLeftAction", AppSettings.SWIPE_QUEUE)
-            )
+            fun intIf(name: String, apply: (Int) -> Unit) {
+                if (s.has(name)) apply(s.optInt(name))
+            }
+            fun boolIf(name: String, apply: (Boolean) -> Unit) {
+                if (s.has(name)) apply(s.optBoolean(name))
+            }
+            intIf("defaultKeepDownloads") { AppSettings.setDefaultKeepDownloads(context, it) }
+            intIf("seekBackSeconds") { AppSettings.setSeekBackSeconds(context, it) }
+            intIf("seekForwardSeconds") { AppSettings.setSeekForwardSeconds(context, it) }
+            boolIf("adChapterAutoSkip") { AppSettings.setAdChapterAutoSkip(context, it) }
+            boolIf("newEpisodeNotifications") {
+                AppSettings.setNewEpisodeNotifications(context, it)
+            }
+            if (s.has("defaultPlaybackSpeed")) {
+                AppSettings.setDefaultPlaybackSpeed(
+                    context, s.optDouble("defaultPlaybackSpeed", 1.0).toFloat()
+                )
+            }
+            boolIf("wifiOnlyDownloads") { AppSettings.setWifiOnlyDownloads(context, it) }
+            boolIf("streamWhenNotDownloaded") {
+                AppSettings.setStreamWhenNotDownloaded(context, it)
+            }
+            boolIf("skipSilence") { AppSettings.setSkipSilence(context, it) }
+            boolIf("swipeQueueToTop") { AppSettings.setSwipeQueueToTop(context, it) }
+            boolIf("queueNextAtBottom") { AppSettings.setQueueNextAtBottom(context, it) }
+            intIf("widgetOpacity") { AppSettings.setWidgetOpacity(context, it) }
+            if (s.has("swipeRightAction")) {
+                AppSettings.setSwipeRightAction(
+                    context, s.optString("swipeRightAction", AppSettings.SWIPE_PLAYED)
+                )
+            }
+            if (s.has("swipeLeftAction")) {
+                AppSettings.setSwipeLeftAction(
+                    context, s.optString("swipeLeftAction", AppSettings.SWIPE_QUEUE)
+                )
+            }
+            // v2 schedule configuration
+            if (s.has("checkpointTimes")) {
+                s.optString("checkpointTimes").split(",")
+                    .mapNotNull { it.trim().toIntOrNull() }
+                    .forEachIndexed { idx, m -> AppSettings.setCheckpointTime(context, idx, m) }
+            }
+            if (s.has("checkpointEnabled")) {
+                s.optString("checkpointEnabled").split(",")
+                    .forEachIndexed { idx, flag ->
+                        AppSettings.setCheckpointEnabled(context, idx, flag.trim() == "1")
+                    }
+            }
+            boolIf("quietHoursEnabled") { AppSettings.setQuietHoursEnabled(context, it) }
+            if (s.has("quietStartMinutes") && s.has("quietEndMinutes")) {
+                AppSettings.setQuietHours(
+                    context, s.optInt("quietStartMinutes"), s.optInt("quietEndMinutes")
+                )
+            }
+            boolIf("notifyOnlyAtCheckpoints") {
+                AppSettings.setNotifyOnlyAtCheckpoints(context, it)
+            }
+            boolIf("continueCurrentShow") { AppSettings.setContinueCurrentShow(context, it) }
+            boolIf("notificationDoneButton") {
+                AppSettings.setNotificationDoneButton(context, it)
+            }
+            boolIf("categoryRefreshButtons") {
+                AppSettings.setCategoryRefreshButtons(context, it)
+            }
+            boolIf("libraryCompactList") { AppSettings.setLibraryCompactList(context, it) }
             runCatching {
-                ThemePrefs.set(context, ThemeMode.valueOf(s.optString("themeMode", "SYSTEM")))
+                if (s.has("themeMode")) {
+                    ThemePrefs.set(context, ThemeMode.valueOf(s.optString("themeMode")))
+                }
             }
             runCatching {
                 // custom ARGBs first — their setters force accent=CUSTOM, so
@@ -290,16 +382,20 @@ object StepcastBackup {
                 }
             }
             runCatching {
-                ThemePrefs.setAccent(
-                    context, AccentColor.valueOf(s.optString("accentColor", "CYAN"))
-                )
+                if (s.has("accentColor")) {
+                    ThemePrefs.setAccent(
+                        context, AccentColor.valueOf(s.optString("accentColor"))
+                    )
+                }
             }
             runCatching {
-                ThemePrefs.setSecondaryAccent(
-                    context,
-                    s.stringOrNull("secondaryAccentColor")
-                        ?.let { AccentColor.valueOf(it) }
-                )
+                if (s.has("secondaryAccentColor")) {
+                    ThemePrefs.setSecondaryAccent(
+                        context,
+                        s.stringOrNull("secondaryAccentColor")
+                            ?.let { AccentColor.valueOf(it) }
+                    )
+                }
             }
         }
 

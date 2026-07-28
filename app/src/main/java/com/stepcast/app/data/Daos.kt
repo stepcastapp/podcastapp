@@ -143,6 +143,13 @@ interface EpisodeDao {
     )
     fun observeForFolder(folder: String): Flow<List<Episode>>
 
+    /**
+     * The 500-row window used to be cut newest-first ALWAYS, so an
+     * oldest-first rule on a big scope returned the oldest of the newest
+     * 500 — the opposite of the ask. The window now follows the rule's
+     * direction; other sorts (duration, shuffle, name) still apply in
+     * Kotlin over their newest-500 window.
+     */
     @Query(
         "SELECT e.* FROM episodes e " +
             "WHERE (:folder IS NULL OR EXISTS (" +
@@ -151,13 +158,15 @@ interface EpisodeDao {
             "AND (:podcastId IS NULL OR e.podcastId = :podcastId) " +
             "AND (e.played = 0 OR :includePlayed = 1) " +
             "AND (e.downloadStatus = 2 OR :downloadedOnly = 0) " +
-            "ORDER BY e.pubDateMs DESC LIMIT 500"
+            "ORDER BY CASE WHEN :oldestFirst = 1 THEN e.pubDateMs END ASC, " +
+            "CASE WHEN :oldestFirst = 0 THEN e.pubDateMs END DESC LIMIT 500"
     )
     suspend fun selectSmartPlayCandidates(
         folder: String?,
         podcastId: Long?,
         includePlayed: Int,
-        downloadedOnly: Int
+        downloadedOnly: Int,
+        oldestFirst: Int
     ): List<Episode>
 
     @Query("DELETE FROM episodes WHERE id = :id")
@@ -167,16 +176,22 @@ interface EpisodeDao {
     fun observeRecent(limit: Int = 100): Flow<List<Episode>>
 
     // ---- inbox: recent, unplayed, not swiped away, not local files -------
+    // Floor per show = MAX(window, when the user subscribed): subscribing
+    // to a daily show must not dump two weeks of back catalog into "New".
     @Query(
         "SELECT * FROM episodes WHERE played = 0 AND inboxDismissed = 0 " +
-            "AND pubDateMs >= :sinceMs AND audioUrl NOT LIKE 'content:%' " +
+            "AND pubDateMs >= MAX(:sinceMs, COALESCE((SELECT p.subscribedAt " +
+            "FROM podcasts p WHERE p.id = episodes.podcastId), 0)) " +
+            "AND audioUrl NOT LIKE 'content:%' " +
             "ORDER BY pubDateMs DESC LIMIT 300"
     )
     fun observeInbox(sinceMs: Long): Flow<List<Episode>>
 
     @Query(
         "SELECT COUNT(*) FROM episodes WHERE played = 0 AND inboxDismissed = 0 " +
-            "AND pubDateMs >= :sinceMs AND audioUrl NOT LIKE 'content:%'"
+            "AND pubDateMs >= MAX(:sinceMs, COALESCE((SELECT p.subscribedAt " +
+            "FROM podcasts p WHERE p.id = episodes.podcastId), 0)) " +
+            "AND audioUrl NOT LIKE 'content:%'"
     )
     fun observeInboxCount(sinceMs: Long): Flow<Int>
 
@@ -226,9 +241,9 @@ interface EpisodeDao {
         oldestFirst: Int
     ): Episode?
 
-    /** Case-insensitive title search across the whole library. */
+    /** Case-insensitive title search; caller escapes %, _ and \. */
     @Query(
-        "SELECT * FROM episodes WHERE title LIKE '%' || :query || '%' " +
+        "SELECT * FROM episodes WHERE title LIKE '%' || :query || '%' ESCAPE '\\' " +
             "ORDER BY pubDateMs DESC LIMIT 60"
     )
     suspend fun searchByTitle(query: String): List<Episode>
@@ -264,10 +279,62 @@ interface EpisodeDao {
      * Adopts a feed item's new identity for an existing row. Feeds churn
      * guids and enclosure URLs (tracking prefixes, ad-insertion tokens);
      * without this the same episode re-inserts as a fresh row with
-     * positionMs = 0 — which reads as "my episode lost its place".
+     * positionMs = 0 — which reads as "my episode lost its place". The
+     * feed item's metadata comes along too (the row may have been matched
+     * by URL with a corrected title/date). Player-corrected durations and
+     * cached chapters are kept.
      */
-    @Query("UPDATE episodes SET guid = :guid, audioUrl = :audioUrl WHERE id = :id")
-    suspend fun rekeyEpisode(id: Long, guid: String, audioUrl: String)
+    @Query(
+        "UPDATE episodes SET guid = :guid, audioUrl = :audioUrl, " +
+            "title = CASE WHEN :title = '' THEN title ELSE :title END, " +
+            "description = CASE WHEN :description = '' THEN description ELSE :description END, " +
+            "imageUrl = COALESCE(:imageUrl, imageUrl), " +
+            "pubDateMs = CASE WHEN :pubDateMs > 0 THEN :pubDateMs ELSE pubDateMs END, " +
+            "durationMs = CASE WHEN durationMs <= 0 THEN :durationMs ELSE durationMs END " +
+            "WHERE id = :id"
+    )
+    suspend fun rekeyEpisode(
+        id: Long,
+        guid: String,
+        audioUrl: String,
+        title: String,
+        description: String,
+        imageUrl: String?,
+        pubDateMs: Long,
+        durationMs: Long
+    )
+
+    /**
+     * Refresh-time metadata adoption for a KNOWN guid: publishers fix
+     * typos, add show notes, add durations and chapters to old episodes —
+     * rows used to freeze at first insert forever. Playback-owned columns
+     * (position, played, downloads) are never touched; a player-corrected
+     * duration and already-cached chapters win over the feed. The WHERE
+     * tail skips the write (and Room invalidation) when nothing changed.
+     */
+    @Query(
+        "UPDATE episodes SET " +
+            "title = CASE WHEN :title = '' THEN title ELSE :title END, " +
+            "description = CASE WHEN :description = '' THEN description ELSE :description END, " +
+            "imageUrl = COALESCE(:imageUrl, imageUrl), " +
+            "durationMs = CASE WHEN durationMs <= 0 THEN :durationMs ELSE durationMs END, " +
+            "chapters = COALESCE(chapters, :chapters) " +
+            "WHERE podcastId = :podcastId AND guid = :guid AND (" +
+            "(:title != '' AND title != :title) OR " +
+            "(:description != '' AND description != :description) OR " +
+            "(imageUrl IS NULL AND :imageUrl IS NOT NULL) OR " +
+            "(durationMs <= 0 AND :durationMs > 0) OR " +
+            "(chapters IS NULL AND :chapters IS NOT NULL))"
+    )
+    suspend fun updateEpisodeMeta(
+        podcastId: Long,
+        guid: String,
+        title: String,
+        description: String,
+        imageUrl: String?,
+        durationMs: Long,
+        chapters: String?
+    )
 
     /**
      * Deletes progress-less duplicate rows created by past guid churn: same
@@ -376,12 +443,18 @@ interface EpisodeDao {
         limit: Int
     ): Flow<List<Episode>>
 
-    /** Per-feed list cap: prune old rows, sparing downloads and the queue. */
+    /**
+     * Per-feed list cap: prune old rows, sparing downloads, the queue,
+     * in-progress episodes, and played history ("keep the newest N" reads
+     * like a display setting — it must never eat listening state). The id
+     * tiebreaker keeps the survivor set deterministic for equal pubDates.
+     */
     @Query(
         "DELETE FROM episodes WHERE podcastId = :podcastId AND downloadStatus = 0 " +
+            "AND positionMs = 0 AND played = 0 " +
             "AND id NOT IN (SELECT episodeId FROM queue) " +
             "AND id NOT IN (SELECT id FROM episodes WHERE podcastId = :podcastId " +
-            "ORDER BY pubDateMs DESC LIMIT :cap)"
+            "ORDER BY pubDateMs DESC, id DESC LIMIT :cap)"
     )
     suspend fun pruneBeyondCap(podcastId: Long, cap: Int): Int
 
@@ -415,6 +488,9 @@ interface ListenStatDao {
 
     @Query("DELETE FROM listen_stats")
     suspend fun clear()
+
+    @Query("DELETE FROM listen_stats WHERE podcastId = :podcastId")
+    suspend fun deleteFor(podcastId: Long)
 }
 
 @Dao
@@ -460,6 +536,22 @@ interface QueueDao {
             "(SELECT id FROM episodes WHERE played = 1)"
     )
     suspend fun removePlayed()
+
+    // scoped variants: a per-show/per-category bulk cleanup must not clear
+    // OTHER shows' deliberately-queued played episodes from Up Next
+    @Query(
+        "DELETE FROM queue WHERE episodeId IN " +
+            "(SELECT id FROM episodes WHERE played = 1 AND podcastId = :podcastId)"
+    )
+    suspend fun removePlayedForPodcast(podcastId: Long)
+
+    @Query(
+        "DELETE FROM queue WHERE episodeId IN " +
+            "(SELECT e.id FROM episodes e INNER JOIN podcast_categories pc " +
+            "ON pc.podcastId = e.podcastId " +
+            "WHERE e.played = 1 AND pc.category = :folder)"
+    )
+    suspend fun removePlayedForFolder(folder: String)
 }
 
 @Dao

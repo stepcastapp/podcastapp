@@ -124,13 +124,19 @@ object BeyondPodImport {
                     while (c.moveToNext()) {
                         val url = c.getString(2).orEmpty()
                         if (!url.startsWith("http")) continue
-                        val folder = c.getString(4).orEmpty()
-                            .substringBefore('|').trim()
-                            .takeIf { it.isNotEmpty() && !isSpecialCategory(it) }
+                        // BeyondPod stores "Primary|Secondary" — keep BOTH
+                        // (multi-category membership is supported here)
+                        val parts = c.getString(4).orEmpty().split('|')
+                            .map { it.trim() }
+                            .filter { it.isNotEmpty() && !isSpecialCategory(it) }
+                        val folder = parts.firstOrNull()
                         val keep = c.getInt(5).takeIf { it in 1..50 }
                             ?: AppSettings.defaultKeepDownloads
                         val maxAge = c.getInt(6).takeIf { it in 1..365 } ?: 0
-                        val id = repository.importPodcastStub(
+                        // a feed already in the library keeps its local
+                        // settings — same merge policy as backup restore
+                        val existing = repository.podcastIdForFeed(url)
+                        val id = existing ?: repository.importPodcastStub(
                             feedUrl = url,
                             title = c.getString(1).orEmpty(),
                             imageUrl = c.getString(3),
@@ -138,8 +144,16 @@ object BeyondPodImport {
                             keepDownloads = keep,
                             maxAgeDays = maxAge
                         )
-                        c.getInt(7).takeIf { it in 1..1000 }?.let { cap ->
-                            repository.setListPrefs(id, cap, false, false)
+                        parts.drop(if (existing == null) 1 else 0).forEach {
+                            repository.addToCategory(id, it)
+                        }
+                        if (existing == null) {
+                            // BeyondPod's "max tracks" was a LIST cap; apply
+                            // only to fresh imports — on existing shows it
+                            // pruned episodes and reset sort/auto-queue
+                            c.getInt(7).takeIf { it in 1..1000 }?.let { cap ->
+                                repository.setListPrefs(id, cap, false, false)
+                            }
                         }
                         c.getString(0)?.trim()?.takeIf { it.isNotEmpty() }?.let { uuid ->
                             uuidToPodcastId[uuid.lowercase()] = id
@@ -207,7 +221,11 @@ object BeyondPodImport {
                 }
             }
 
-            // -- per-category refresh cadence -------------------------------
+            // -- refresh cadence → per-show schedule rules ------------------
+            // Category cadences are dead since the promise-based schedule;
+            // map BeyondPod's fast cadences (≤2h) onto per-show Hourly rules
+            // so the import means what it says. Everything else stays
+            // Automatic (release-aware), which supersedes slow cadences.
             var refreshRules = 0
             runCatching {
                 db.rawQuery(
@@ -222,9 +240,12 @@ object BeyondPodImport {
                         if (category.isEmpty() || isSpecialCategory(category)) continue
                         val totalMs = c.getLong(0) * c.getInt(1)
                         val hours = (totalMs / 3_600_000L).toInt()
-                        if (hours in 1..168) {
-                            repository.importCategoriesOrdered(listOf(category))
-                            repository.setCategoryRefreshHours(category, hours)
+                        if (hours in 1..2) {
+                            repository.categoryMemberIds(category).forEach { memberId ->
+                                repository.setScheduleRule(
+                                    memberId, com.stepcast.app.sync.ScheduleEngine.MODE_HOURLY, 0
+                                )
+                            }
                             refreshRules++
                         }
                     }

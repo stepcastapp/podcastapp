@@ -98,7 +98,17 @@ class PodcastRepository(
             author = feed.author,
             lastRefreshed = System.currentTimeMillis()
         )
-        if (podcast.autoQueue) newIds.forEach { addToQueueLast(it) }
+        if (podcast.autoQueue && newIds.isNotEmpty()) {
+            // append in the show's own listening order — a serial show
+            // (oldest-first) used to get new episodes queued in reverse
+            val newEps = newIds.mapNotNull { db.episodeDao().get(it) }
+            val ordered = if (podcast.sortOldestFirst) {
+                newEps.sortedBy { it.pubDateMs }
+            } else {
+                newEps.sortedByDescending { it.pubDateMs }
+            }
+            appendToQueueLast(ordered.map { it.id })
+        }
         if (podcast.episodeCap > 0) {
             val pruned = db.episodeDao().pruneBeyondCap(podcastId, podcast.episodeCap)
             if (pruned > 0) PlaybackJournal.log("prune", "pod=$podcastId removed=$pruned")
@@ -135,11 +145,12 @@ class PodcastRepository(
                 // take(), so it never consumes a "newest N" slot)
                 .filter { it.autoDownloadEligible }
                 .filter { cutoffMs == 0L || it.pubDateMs >= cutoffMs }
+                // exhausted/dismissed enclosures excluded BEFORE take():
+                // with keep=2, two dead newest episodes used to consume
+                // both slots forever and nothing else ever auto-downloaded
+                .filter { it.downloadAttempts < Episode.MAX_AUTO_DOWNLOAD_ATTEMPTS }
                 .take(podcast.keepDownloads)
                 .filter { it.downloadStatus == Episode.DOWNLOAD_NONE }
-                // dead enclosures must not reappear on every refresh —
-                // after enough terminal failures only a manual retry works
-                .filter { it.downloadAttempts < Episode.MAX_AUTO_DOWNLOAD_ATTEMPTS }
                 .forEach { DownloadWorker.start(appContext, it.id) }
             episodes.filter { it.isDownloaded && it.played }
                 .forEach { deleteDownload(it.id) }
@@ -179,7 +190,9 @@ class PodcastRepository(
     suspend fun markPlayedOlderThan(podcastId: Long, days: Int) {
         val cutoff = System.currentTimeMillis() - days * 86_400_000L
         db.episodeDao().markPlayedOlderThan(podcastId, cutoff, System.currentTimeMillis())
-        db.queueDao().removePlayed()
+        // scoped: cleaning one show must not clear other shows' played
+        // episodes the user deliberately left in Up Next
+        db.queueDao().removePlayedForPodcast(podcastId)
         PlaybackJournal.log("bulk", "olderThan pod=$podcastId days=$days")
     }
 
@@ -188,15 +201,16 @@ class PodcastRepository(
         db.episodeDao().markPlayedOlderThanInFolder(
             category, cutoff, System.currentTimeMillis()
         )
-        db.queueDao().removePlayed()
+        db.queueDao().removePlayedForFolder(category)
         PlaybackJournal.log("bulk", "olderThan folder=$category days=$days")
     }
 
     /** Per-podcast listening time accumulation (see ListenStats). */
     suspend fun addPodcastListening(podcastId: Long, wallMs: Long, contentMs: Long) {
-        if (db.listenStatDao().bump(podcastId, wallMs, contentMs) == 0) {
-            db.listenStatDao().insert(ListenStat(podcastId, wallMs, contentMs))
-        }
+        // insert-IGNORE first, then bump: the old bump-then-insert order
+        // dropped the delta when another writer created the row in between
+        db.listenStatDao().insert(ListenStat(podcastId, 0, 0))
+        db.listenStatDao().bump(podcastId, wallMs, contentMs)
     }
 
     suspend fun topListenStats(limit: Int = 8): List<Pair<Podcast, ListenStat>> =
@@ -237,15 +251,20 @@ class PodcastRepository(
             .sum()
     }
 
-    /** Subscribes to many feeds concurrently (bounded); returns successes. */
-    suspend fun subscribeAll(feedUrls: List<String>): Int = coroutineScope {
+    /**
+     * Subscribes to many feeds concurrently (bounded); returns successes.
+     * OPML entries carry their outline folder — round-tripping our own
+     * export now preserves categories instead of flattening the library.
+     */
+    suspend fun subscribeAll(entries: List<Opml.Entry>): Int = coroutineScope {
         val gate = Semaphore(6)
-        feedUrls
-            .map { url ->
+        entries
+            .map { entry ->
                 async {
                     gate.withPermit {
                         runCatching {
-                            subscribe(url, suppressBacklogAutoDownload = true)
+                            val id = subscribe(entry.url, suppressBacklogAutoDownload = true)
+                            entry.folder?.let { addToCategory(id, it) }
                         }.isSuccess
                     }
                 }
@@ -255,13 +274,25 @@ class PodcastRepository(
     }
 
     suspend fun unsubscribe(podcastId: Long) = withContext(Dispatchers.IO) {
-        db.episodeDao().listForPodcast(podcastId).forEach { episode ->
+        val episodes = db.episodeDao().listForPodcast(podcastId)
+        episodes.forEach { episode ->
             episode.localFilePath?.let { runCatching { File(it).delete() } }
+            // local-folder art cache would otherwise leak forever
+            runCatching {
+                File(File(appContext.filesDir, "local_art"), "${episode.id}.jpg").delete()
+            }
         }
-        db.queueDao().removeForPodcast(podcastId)
-        db.episodeDao().deleteForPodcast(podcastId)
-        db.podcastCategoryDao().removeAllFor(podcastId)
-        db.podcastDao().delete(podcastId)
+        // one transaction: five separate commits left visible half-deleted
+        // states and, on interruption, orphaned rows
+        db.withTransaction {
+            db.queueDao().removeForPodcast(podcastId)
+            db.episodeDao().deleteForPodcast(podcastId)
+            db.podcastCategoryDao().removeAllFor(podcastId)
+            // rowids get recycled — a leaked stats row would gift the NEXT
+            // subscription this show's lifetime listening time
+            db.listenStatDao().deleteFor(podcastId)
+            db.podcastDao().delete(podcastId)
+        }
     }
 
     suspend fun setAdJump(podcastId: Long, sec: Int) {
@@ -279,7 +310,10 @@ class PodcastRepository(
     }
 
     suspend fun setPlaybackSpeed(podcastId: Long, speed: Float) {
-        db.podcastDao().updatePlaybackSpeed(podcastId, speed.coerceIn(0f, 4f))
+        // 0 = clear the override; otherwise the same range the global
+        // default allows — a per-show 4x the UI can't express was possible
+        val clamped = if (speed <= 0f) 0f else speed.coerceIn(0.5f, 3.0f)
+        db.podcastDao().updatePlaybackSpeed(podcastId, clamped)
     }
 
     /** Per-podcast playback speed for the episode's feed; 0 = no override. */
@@ -439,12 +473,16 @@ class PodcastRepository(
 
     /** Replaces every membership with [categories] (empty = uncategorized). */
     suspend fun setCategories(podcastId: Long, categories: List<String>) {
-        db.podcastCategoryDao().removeAllFor(podcastId)
-        categories.map { it.trim() }.filter { it.isNotEmpty() }.distinct().forEach {
-            ensureCategoryMeta(it)
-            db.podcastCategoryDao().add(PodcastCategory(podcastId, it))
+        // atomic: delete-then-re-add as separate commits let observers see
+        // (and an interruption keep) an uncategorized intermediate state
+        db.withTransaction {
+            db.podcastCategoryDao().removeAllFor(podcastId)
+            categories.map { it.trim() }.filter { it.isNotEmpty() }.distinct().forEach {
+                ensureCategoryMeta(it)
+                db.podcastCategoryDao().add(PodcastCategory(podcastId, it))
+            }
+            syncPrimaryFolder(podcastId)
         }
-        syncPrimaryFolder(podcastId)
     }
 
     suspend fun addToCategory(podcastId: Long, category: String) {
@@ -469,19 +507,23 @@ class PodcastRepository(
     suspend fun renameCategory(oldName: String, newName: String) {
         val clean = newName.trim()
         if (clean.isEmpty() || clean == oldName) return
-        db.podcastCategoryDao().renameCategory(oldName, clean)
-        db.podcastDao().renameFolder(oldName, clean)
-        db.smartPlayDao().renameEntryFolder(oldName, clean)
-        val old = db.categoryDao().get(oldName)
-        db.categoryDao().delete(oldName)
-        db.categoryDao().upsert(
-            CategoryMeta(
-                name = clean,
-                sortOrder = old?.sortOrder ?: ((db.categoryDao().maxSort() ?: -1) + 1),
-                refreshHours = old?.refreshHours ?: 0,
-                anchorMinutes = old?.anchorMinutes ?: -1
+        // atomic so an interruption can't lose the meta (sort order) between
+        // the delete and the re-upsert
+        db.withTransaction {
+            db.podcastCategoryDao().renameCategory(oldName, clean)
+            db.podcastDao().renameFolder(oldName, clean)
+            db.smartPlayDao().renameEntryFolder(oldName, clean)
+            val old = db.categoryDao().get(oldName)
+            db.categoryDao().delete(oldName)
+            db.categoryDao().upsert(
+                CategoryMeta(
+                    name = clean,
+                    sortOrder = old?.sortOrder ?: ((db.categoryDao().maxSort() ?: -1) + 1),
+                    refreshHours = old?.refreshHours ?: 0,
+                    anchorMinutes = old?.anchorMinutes ?: -1
+                )
             )
-        )
+        }
     }
 
     /**
@@ -490,12 +532,21 @@ class PodcastRepository(
      * BeyondPod's category-delete behavior).
      */
     suspend fun deleteCategory(name: String) {
-        val members = db.podcastCategoryDao().memberIds(name)
-        db.podcastCategoryDao().deleteCategory(name)
-        db.podcastDao().clearFolder(name)
-        members.forEach { syncPrimaryFolder(it) }
-        db.smartPlayDao().deleteEntriesForFolder(name)
-        db.categoryDao().delete(name)
+        db.withTransaction {
+            val members = db.podcastCategoryDao().memberIds(name)
+            db.podcastCategoryDao().deleteCategory(name)
+            db.podcastDao().clearFolder(name)
+            members.forEach { syncPrimaryFolder(it) }
+            db.smartPlayDao().deleteEntriesForFolder(name)
+            // a SmartPlay whose last rule pointed here would live on in the
+            // strip/widget/shortcuts resolving to nothing — remove empties
+            db.smartPlayDao().listAll().forEach { play ->
+                if (db.smartPlayDao().entriesFor(play.id).isEmpty()) {
+                    db.smartPlayDao().delete(play.id)
+                }
+            }
+            db.categoryDao().delete(name)
+        }
     }
 
     // ---- category meta (manual order + refresh cadence) --------------------
@@ -628,7 +679,8 @@ class PodcastRepository(
                 folder = entry.folder,
                 podcastId = entry.podcastId,
                 includePlayed = if (entry.includePlayed) 1 else 0,
-                downloadedOnly = if (entry.downloadedOnly) 1 else 0
+                downloadedOnly = if (entry.downloadedOnly) 1 else 0,
+                oldestFirst = if (entry.episodeSort == SmartPlayEntry.SORT_OLDEST) 1 else 0
             ).filter { it.id !in seen }
             val sorted = when (entry.episodeSort) {
                 SmartPlayEntry.SORT_NAME_ASC -> candidates.sortedBy { it.title.lowercase() }
@@ -689,7 +741,9 @@ class PodcastRepository(
         val q = query.trim()
         if (q.length < 2) return emptyList<Podcast>() to emptyList()
         val shows = allPodcasts().filter { it.title.contains(q, ignoreCase = true) }
-        val episodes = db.episodeDao().searchByTitle(q)
+        // escape LIKE wildcards: searching "100%" must not match everything
+        val escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        val episodes = db.episodeDao().searchByTitle(escaped)
         return shows to episodes
     }
 
@@ -831,7 +885,8 @@ class PodcastRepository(
             folder = entry.folder,
             podcastId = entry.podcastId,
             includePlayed = if (entry.includePlayed) 1 else 0,
-            downloadedOnly = if (entry.downloadedOnly) 1 else 0
+            downloadedOnly = if (entry.downloadedOnly) 1 else 0,
+            oldestFirst = 0
         ).size
 
     /**
@@ -882,14 +937,25 @@ class PodcastRepository(
         val tmp = reordered[idx]
         reordered[idx] = reordered[other]
         reordered[other] = tmp
-        reordered.forEachIndexed { i, ep -> db.queueDao().setPosition(ep.id, i) }
+        // one transaction: per-row updates emitted N intermediate queue
+        // states per tap (flicker + racy observers)
+        db.withTransaction {
+            reordered.forEachIndexed { i, ep -> db.queueDao().setPosition(ep.id, i) }
+        }
     }
 
     suspend fun setPlayed(episodeId: Long, played: Boolean) {
+        val wasPlayed = db.episodeDao().get(episodeId)?.played ?: false
         db.episodeDao().setPlayed(
             episodeId, played, if (played) System.currentTimeMillis() else 0L
         )
-        if (played) db.queueDao().remove(episodeId)
+        if (played) {
+            db.queueDao().remove(episodeId)
+            // a deliberate single mark-played counts as finished, same as
+            // playback completion (bulk cleanups deliberately do NOT)
+            if (!wasPlayed) ListenStats.addFinishedEpisode(appContext)
+        }
+        PlaybackJournal.log("played", "toggle=$played ep=$episodeId")
     }
 
     suspend fun markAllPlayed(podcastId: Long) {
@@ -964,7 +1030,11 @@ class PodcastRepository(
                         )
                     }
                 }.sortedBy { it.startMs }
-                db.episodeDao().setChapters(episodeId, Chapters.serialize(chapters))
+                // never cache EMPTY over the json: marker — that used to
+                // destroy the URL pointer forever after one bad fetch
+                if (chapters.isNotEmpty()) {
+                    db.episodeDao().setChapters(episodeId, Chapters.serialize(chapters))
+                }
                 chapters
             }
         } catch (e: Exception) {
@@ -1083,7 +1153,7 @@ class PodcastRepository(
     private suspend fun insertEpisodesReturningIds(
         podcastId: Long,
         feed: ParsedFeed
-    ): List<Long> {
+    ): List<Long> = db.withTransaction {
         val dao = db.episodeDao()
         val existing = dao.listForPodcast(podcastId)
         val knownGuids = existing.mapTo(HashSet()) { it.guid }
@@ -1102,7 +1172,19 @@ class PodcastRepository(
         val toInsert = mutableListOf<Episode>()
         for (parsed in feed.episodes) {
             val entity = parsed.toEntity(podcastId)
-            if (entity.guid in knownGuids) continue
+            if (entity.guid in knownGuids) {
+                // known episode: adopt corrected metadata (frozen-forever
+                // rows were the single biggest feed-vs-app divergence)
+                dao.updateEpisodeMeta(
+                    podcastId, entity.guid,
+                    title = entity.title.takeIf { it != "(untitled)" }.orEmpty(),
+                    description = entity.description,
+                    imageUrl = entity.imageUrl,
+                    durationMs = entity.durationMs,
+                    chapters = entity.chapters
+                )
+                continue
+            }
             val twin = orphaned.firstOrNull {
                 it.audioUrl == entity.audioUrl ||
                     (entity.pubDateMs > 0 && it.pubDateMs == entity.pubDateMs &&
@@ -1111,7 +1193,14 @@ class PodcastRepository(
             if (twin != null) {
                 orphaned.remove(twin)
                 knownGuids += entity.guid
-                dao.rekeyEpisode(twin.id, entity.guid, entity.audioUrl)
+                dao.rekeyEpisode(
+                    twin.id, entity.guid, entity.audioUrl,
+                    title = entity.title.takeIf { it != "(untitled)" }.orEmpty(),
+                    description = entity.description,
+                    imageUrl = entity.imageUrl,
+                    pubDateMs = entity.pubDateMs,
+                    durationMs = entity.durationMs
+                )
                 PlaybackJournal.log(
                     "rekey", "ep=${twin.id} pod=$podcastId pos=${twin.positionMs}"
                 )
@@ -1128,7 +1217,7 @@ class PodcastRepository(
         }
         val ids = dao.insertAll(toInsert).filter { it != -1L }
         backfillTranscripts(podcastId, feed)
-        return ids
+        ids
     }
 
     /** Insert IGNOREs conflicts, so episodes that existed before a feed

@@ -89,6 +89,7 @@ class PlaybackService : MediaLibraryService() {
 
     // listening-stats accumulators, flushed alongside position persists
     private var statsLastPositionMs = -1L
+    private var statsLastWallMs = -1L
     private var statsPendingWallMs = 0L
     private var statsPendingContentMs = 0L
     private var activePodcastId: Long? = null
@@ -893,11 +894,17 @@ class PlaybackService : MediaLibraryService() {
     private fun accumulateStatsTick() {
         val pos = mediaSession?.player?.currentPosition ?: return
         val last = statsLastPositionMs
+        val nowWall = android.os.SystemClock.elapsedRealtime()
+        val lastWall = statsLastWallMs
         statsLastPositionMs = pos
+        statsLastWallMs = nowWall
         if (last < 0) return
         val delta = pos - last
         if (delta in 1..15_000) {
-            statsPendingWallMs += TICK_MS
+            // measured elapsed time, not an assumed fixed tick — delay()
+            // drifts under load/Doze and systematically under-counted
+            val wallDelta = if (lastWall > 0) nowWall - lastWall else TICK_MS
+            statsPendingWallMs += wallDelta.coerceIn(1, 15_000)
             statsPendingContentMs += delta
         }
     }
@@ -923,6 +930,7 @@ class PlaybackService : MediaLibraryService() {
     private fun stopTicker() {
         flushStats()
         statsLastPositionMs = -1
+        statsLastWallMs = -1
         tickerJob?.cancel()
         tickerJob = null
     }

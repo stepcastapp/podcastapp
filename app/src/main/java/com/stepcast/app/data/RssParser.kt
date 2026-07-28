@@ -60,14 +60,44 @@ object RssParser {
         "Agrave" to "À", "Aacute" to "Á", "Auml" to "Ä", "Aring" to "Å",
         "Ccedil" to "Ç", "Eacute" to "É", "Egrave" to "È",
         "Ntilde" to "Ñ", "Oacute" to "Ó", "Ouml" to "Ö", "Oslash" to "Ø",
-        "Uacute" to "Ú", "Uuml" to "Ü"
+        "Uacute" to "Ú", "Uuml" to "Ü",
+        // the rest of Latin-1 + common symbol names — ONE unknown entity
+        // used to abort an entire feed's parse
+        "sect" to "§", "acute" to "´", "curren" to "¤", "brvbar" to "¦",
+        "uml" to "¨", "ordf" to "ª", "not" to "¬", "shy" to "­",
+        "macr" to "¯", "sup1" to "¹", "ordm" to "º", "cedil" to "¸",
+        "yen" to "¥", "Acirc" to "Â", "Atilde" to "Ã", "AElig" to "Æ",
+        "Ecirc" to "Ê", "Euml" to "Ë", "Igrave" to "Ì", "Iacute" to "Í",
+        "Icirc" to "Î", "Iuml" to "Ï", "ETH" to "Ð", "eth" to "ð",
+        "Ograve" to "Ò", "Ocirc" to "Ô", "Otilde" to "Õ", "Ugrave" to "Ù",
+        "Ucirc" to "Û", "Yacute" to "Ý", "THORN" to "Þ", "thorn" to "þ",
+        "OElig" to "Œ", "oelig" to "œ", "Scaron" to "Š", "scaron" to "š",
+        "Yuml" to "Ÿ", "fnof" to "ƒ", "circ" to "ˆ", "tilde" to "˜",
+        "ensp" to " ", "emsp" to " ", "thinsp" to " ",
+        "zwnj" to "", "zwj" to "", "lrm" to "", "rlm" to "",
+        "minus" to "−", "loz" to "◊", "infin" to "∞",
+        "ne" to "≠", "le" to "≤", "ge" to "≥",
+        "hearts" to "♥", "diams" to "♦", "clubs" to "♣", "spades" to "♠",
+        "larr" to "←", "uarr" to "↑", "rarr" to "→", "darr" to "↓"
     )
 
     private val rfc822Formats = listOf(
         "EEE, dd MMM yyyy HH:mm:ss Z",
         "EEE, dd MMM yyyy HH:mm:ss zzz",
         "EEE, dd MMM yyyy HH:mm Z",
+        "EEE, dd MMM yyyy HH:mm:ss",
+        "EEE, dd MMM yy HH:mm:ss Z",
         "dd MMM yyyy HH:mm:ss Z"
+    )
+
+    // Atom-derived generators (Substack, Ghost, many CMSes) put ISO-8601
+    // into <pubDate>. Unparsed dates become pubDateMs = 0: invisible in
+    // the inbox, bottom of every list, first casualty of episode caps.
+    private val isoFormats = listOf(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd"
     )
 
     fun parse(stream: InputStream): ParsedFeed {
@@ -85,9 +115,7 @@ object RssParser {
         // set so those feeds parse instead of failing to subscribe. No
         // runCatching here: if registration ever fails again it must fail
         // loudly, not resurface as a cryptic per-feed parse error.
-        for ((name, value) in HTML_ENTITIES) {
-            parser.defineEntityReplacementText(name, value)
-        }
+        registerHtmlEntities(parser)
 
         var channelTitle = ""
         var channelDescription = ""
@@ -109,14 +137,17 @@ object RssParser {
         var itemTranscriptType: String? = null
 
         var event = parser.eventType
+        try {
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
                 XmlPullParser.START_TAG -> {
                     val name = parser.name.lowercase(Locale.ROOT)
                     if (inItem) {
                         when (name) {
-                            "title" -> itemTitle = parser.nextTextSafe()
-                            "guid" -> itemGuid = parser.nextTextSafe()
+                            // first occurrence wins: a nested <image><title>
+                            // or <source> must not overwrite the item's own
+                            "title" -> if (itemTitle.isEmpty()) itemTitle = parser.nextTextSafe()
+                            "guid" -> if (itemGuid.isEmpty()) itemGuid = parser.nextTextSafe()
                             "description" -> if (itemDescription.isEmpty()) itemDescription = parser.nextTextSafe()
                             "itunes:summary" -> if (itemDescription.isEmpty()) itemDescription = parser.nextTextSafe()
                             "pubdate" -> itemPubDate = parseDate(parser.nextTextSafe())
@@ -207,6 +238,14 @@ object RssParser {
             }
             event = parser.next()
         }
+        } catch (e: Exception) {
+            // A fatal parser error (usually one item with a malformed
+            // entity) aborts the STREAM — there is no skipping past it.
+            // Keep the episodes that already parsed instead of failing the
+            // whole feed; only rethrow when literally nothing was salvaged
+            // (a genuinely broken feed should still trip the failure badge).
+            if (episodes.isEmpty() && channelTitle.isEmpty()) throw e
+        }
 
         return ParsedFeed(
             title = channelTitle.ifEmpty { "(untitled feed)" },
@@ -217,15 +256,29 @@ object RssParser {
         )
     }
 
+    /** Shared with Opml — leaked HTML entities plague OPML exports too. */
+    internal fun registerHtmlEntities(parser: XmlPullParser) {
+        for ((name, value) in HTML_ENTITIES) {
+            parser.defineEntityReplacementText(name, value)
+        }
+    }
+
     private fun XmlPullParser.nextTextSafe(): String = try {
         nextText().trim()
     } catch (e: Exception) {
         ""
     }
 
-    private fun parseDate(text: String): Long {
+    private fun parseDate(rawText: String): Long {
+        val text = rawText.trim()
         if (text.isEmpty()) return 0
-        for (fmt in rfc822Formats) {
+        // ISO-8601 first when it looks like one ("2026-07-27T10:00:00Z")
+        val formats = if (text.length >= 10 && text[4] == '-') {
+            isoFormats + rfc822Formats
+        } else {
+            rfc822Formats
+        }
+        for (fmt in formats) {
             try {
                 return SimpleDateFormat(fmt, Locale.US).parse(text)?.time ?: 0
             } catch (_: Exception) {

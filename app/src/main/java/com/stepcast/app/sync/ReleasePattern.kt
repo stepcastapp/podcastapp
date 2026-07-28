@@ -47,8 +47,7 @@ object ReleasePattern {
         val median = intervals.sorted()[intervals.size / 2]
         val consistent = intervals.count { it in (median / 2)..(median * 3 / 2) }
         val confidence = consistent.toFloat() / intervals.size
-        val minuteList = dates.map { minutesOfDay(it, zone) }.sorted()
-        val minutes = minuteList[minuteList.size / 2]
+        val minutes = circularMedianMinutes(dates.map { minutesOfDay(it, zone) })
         val dows = dates.map { isoDayOfWeek(it, zone) }
 
         return when {
@@ -116,6 +115,26 @@ object ReleasePattern {
             cal.add(Calendar.DAY_OF_MONTH, 1)
         }
         return null
+    }
+
+    /**
+     * Minutes-of-day is CIRCULAR: a show releasing around midnight
+     * (23:50 / 00:10 / 23:55) has a linear median near 23:50 only by luck —
+     * with more samples it can land near noon, hours from every actual
+     * release. Try the plain median and a half-day-rotated median, keep
+     * whichever sits closer to its samples (circular distance).
+     */
+    internal fun circularMedianMinutes(minuteList: List<Int>): Int {
+        if (minuteList.isEmpty()) return 6 * 60
+        fun medianOf(list: List<Int>) = list.sorted()[list.size / 2]
+        fun circDist(a: Int, b: Int): Int {
+            val d = kotlin.math.abs(a - b) % 1440
+            return minOf(d, 1440 - d)
+        }
+        fun spread(center: Int) = minuteList.sumOf { circDist(center, it) }
+        val plain = medianOf(minuteList)
+        val rotated = (medianOf(minuteList.map { (it + 720) % 1440 }) + 720) % 1440
+        return if (spread(rotated) < spread(plain)) rotated else plain
     }
 
     fun minutesOfDay(ms: Long, zone: TimeZone): Int {

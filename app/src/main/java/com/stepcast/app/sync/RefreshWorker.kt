@@ -42,6 +42,12 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val app = applicationContext as StepcastApplication
+        // replan-only run (schedule edited): recompute the precise wake-up
+        // without fetching anything
+        if (inputData.getBoolean(KEY_PLAN_ONLY, false)) {
+            planNextCheck(app)
+            return@withContext Result.success()
+        }
         val force = inputData.getBoolean(KEY_FORCE, false)
         // category-scoped run (automation's REFRESH_CATEGORY): only that
         // category's members, matched case-insensitively
@@ -56,14 +62,19 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         // their inferred expected release (ReleasePattern over pubDates).
         val cfg = scheduleConfig()
         val now = System.currentTimeMillis()
-        val due = app.repository.allPodcasts().filter { podcast ->
+        val all = app.repository.allPodcasts()
+        // one inference per podcast per run — isDue AND planNextCheck need
+        // it, and recomputing was 4N queries on a big library
+        val expected = HashMap<Long, Long?>(all.size)
+        for (podcast in all) expected[podcast.id] = expectedReleaseFor(app, podcast)
+        val due = all.filter { podcast ->
             if (categoryIds != null && podcast.id !in categoryIds) return@filter false
             if (force) return@filter true
             ScheduleEngine.isDue(
                 mode = podcast.scheduleMode,
                 param = podcast.scheduleParam,
                 lastRefreshedMs = podcast.lastRefreshed,
-                expectedReleaseMs = expectedReleaseFor(app, podcast),
+                expectedReleaseMs = expected[podcast.id],
                 nowMs = now,
                 cfg = cfg
             )
@@ -79,6 +90,7 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
                         runCatching { app.repository.refresh(podcast.id) }
                             .getOrElse {
                                 app.repository.recordRefreshFailure(podcast.id)
+                                failuresThisRun.incrementAndGet()
                                 0
                             } to podcast.title
                     }
@@ -100,19 +112,37 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         // the hourly periodic tick is only the safety net — plan a precise
         // wake-up at the earliest next promise (checkpoint, expected release,
         // pinned slot) so 6:30 means 6:30, not "the tick after 6:30"
-        planNextCheck(app)
+        planNextCheck(app, expected)
+        // every due feed failing usually means a dead network the
+        // constraint didn't catch — back off and retry instead of
+        // pretending success
+        if (due.isNotEmpty() && results.all { it.first == 0 } &&
+            due.size == results.size && failuresThisRun.get() == due.size
+        ) {
+            return@withContext Result.retry()
+        }
         Result.success()
     }
 
-    private suspend fun planNextCheck(app: StepcastApplication) {
+    private val failuresThisRun = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private suspend fun planNextCheck(
+        app: StepcastApplication,
+        expectedCache: Map<Long, Long?>? = null
+    ) {
         val cfg = scheduleConfig()
         val now = System.currentTimeMillis()
         val next = app.repository.allPodcasts().mapNotNull { podcast ->
+            val expectedMs = if (expectedCache != null) {
+                expectedCache[podcast.id]
+            } else {
+                expectedReleaseFor(app, podcast)
+            }
             ScheduleEngine.nextCheck(
                 mode = podcast.scheduleMode,
                 param = podcast.scheduleParam,
                 lastRefreshedMs = podcast.lastRefreshed,
-                expectedReleaseMs = expectedReleaseFor(app, podcast),
+                expectedReleaseMs = expectedMs,
                 nowMs = now,
                 cfg = cfg
             )?.timeMs
@@ -199,6 +229,7 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         private const val KEY_NOTIFY = "notify"
         private const val KEY_FORCE = "force"
         private const val KEY_CATEGORY = "category"
+        private const val KEY_PLAN_ONLY = "planOnly"
         private const val CHANNEL_ID = "new_episodes"
         private const val NOTIFICATION_ID = 100
 
@@ -216,10 +247,31 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
             )
         }
 
+        /**
+         * Recompute the precise next wake-up NOW. Called after any schedule
+         * edit (per-show rule, checkpoint time, quiet hours) — the pending
+         * planned work otherwise keeps the OLD promise for up to 6 hours.
+         */
+        fun replan(context: Context) {
+            val request = OneTimeWorkRequestBuilder<RefreshWorker>()
+                .setInputData(workDataOf(KEY_PLAN_ONLY to true))
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "feed-refresh-replan", ExistingWorkPolicy.REPLACE, request
+            )
+        }
+
         /** Silent, immediate refresh of everything (Library refresh button). */
         fun refreshNow(context: Context) {
             val request = OneTimeWorkRequestBuilder<RefreshWorker>()
                 .setInputData(workDataOf(KEY_NOTIFY to false, KEY_FORCE to true))
+                // offline, an unconstrained forced refresh failed EVERY feed
+                // and three of them badged the whole library as broken
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
                 .build()
             // REPLACE: a forced refresh must actually run, even if an
             // earlier one is still queued (KEEP silently dropped it)
@@ -237,6 +289,11 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
                         KEY_FORCE to true,
                         KEY_CATEGORY to category
                     )
+                )
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
                 )
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
