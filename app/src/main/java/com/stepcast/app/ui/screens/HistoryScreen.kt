@@ -34,11 +34,10 @@ import com.stepcast.app.R
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.stepcast.app.data.PodcastRepository
+import com.stepcast.app.ui.Formatters
 import com.stepcast.app.ui.PlayerConnection
 import com.stepcast.app.ui.theme.EmptyState
 import com.stepcast.app.ui.theme.ScreenTitle
-import java.text.DateFormat
-import java.util.Date
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.pluralStringResource
 
@@ -116,13 +115,7 @@ fun HistoryScreen(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            val finished = if (episode.playedAtMs > 0) {
-                                DateFormat.getDateTimeInstance(
-                                    DateFormat.MEDIUM, DateFormat.SHORT
-                                ).format(Date(episode.playedAtMs))
-                            } else {
-                                ""
-                            }
+                            val finished = Formatters.dateTime(episode.playedAtMs)
                             Text(
                                 listOf(podcast?.title.orEmpty(), finished)
                                     .filter { it.isNotEmpty() }

@@ -95,53 +95,67 @@ references are as of commit `ab06455` and drift as fixes land.
 
 ## Wave 4 — UX pass
 
-- [ ] rememberSaveable: nothing survives rotation (search query/tab,
+- [x] rememberSaveable: nothing survives rotation (search query/tab,
       multi-select, dialogs mid-edit, open full player).
-- [ ] sharedFeedUrl never cleared: hijacks Search for the process
+- [x] sharedFeedUrl never cleared: hijacks Search for the process
       lifetime; re-sharing the same URL no-ops.
-- [ ] Search: IME Search key does nothing; duplicate/blank feedUrl keys
+- [x] Search: IME Search key does nothing; duplicate/blank feedUrl keys
       can crash directory lists; trending failure indistinguishable from
       empty; FixFeedDialog keyboard/button slots.
-- [ ] EpisodeRow menu says "Play next" while removing from queue;
+- [x] EpisodeRow menu says "Play next" while removing from queue;
       no go-to-podcast outside the queue; queue rows lack mark-played.
-- [ ] Unsubscribe and "Mark all played": no confirm, no undo.
-- [ ] DownloadsScreen: metered check frozen at first composition; 0%
+- [x] Unsubscribe and "Mark all played": no confirm, no undo.
+- [x] DownloadsScreen: metered check frozen at first composition; 0%
       active downloads filed under Waiting.
-- [ ] Speed: player list lacks 0.8×; per-show persist silently dropped
+- [x] Speed: player list lacks 0.8×; per-show persist silently dropped
       while podcast still loading; ×/x glyph drift.
-- [ ] Sleep timer dialog shows no armed state; Cancel in confirm slot.
-- [ ] Done on last queued episode leaves finished episode in pill/
+- [x] Sleep timer dialog shows no armed state; Cancel in confirm slot.
+- [x] Done on last queued episode leaves finished episode in pill/
       notification/widgets.
-- [ ] Android Auto: SmartPlays browse as folders instead of playing;
+- [x] Android Auto: SmartPlays browse as folders instead of playing;
       browse ignores oldest-first and includes played.
-- [ ] Widgets: SmartPlays list read outside composition (stale until
+- [x] Widgets: SmartPlays list read outside composition (stale until
       launcher recycles); opacity keys never cleaned on delete (recycled
       ids inherit "invisible"); dead StartSmartPlayAction + stale comment;
       PLAYER widget clips Done when narrow.
-- [ ] Shortcuts keyed on SmartPlay NAME (rename breaks pinned shortcuts);
+- [x] Shortcuts keyed on SmartPlay NAME (rename breaks pinned shortcuts);
       unknown SmartPlay reports SUCCESS to automation.
-- [ ] Automation parity: PLAY/TOGGLE lack the FGS workaround widgets got;
+- [x] Automation parity: PLAY/TOGGLE lack the FGS workaround widgets got;
       AUTOMATION.md/KDoc drift.
-- [ ] Schedule screen: timeline effect not keyed on quiet times;
+- [x] Schedule screen: timeline effect not keyed on quiet times;
       checkpoint rows bypass quiet hours; bare clock times with no
       relative time; hand-typed H:MM fields.
-- [ ] Shared date/duration formatters ("120 min" → "2h"); shared
+- [x] Shared date/duration formatters ("120 min" → "2h"); shared
       MediaItem builder; notification ad-jump missing pre-13; Done button
       on widget ignores the Settings toggle.
-- [ ] Empty states: PodcastScreen (esp. Downloaded filter), preview
+- [x] Empty states: PodcastScreen (esp. Downloaded filter), preview
       episode list; show-more label lies under filters.
-- [ ] Navigation: duplicate podcast destinations (launchSingleTop);
+- [x] Navigation: duplicate podcast destinations (launchSingleTop);
       preview category prompt outside-tap clears the back stack.
-- [ ] Feedback: toasts vs snackbars vs never-clearing inline text vs
+- [x] Feedback: toasts vs snackbars vs never-clearing inline text vs
       silence; Settings inline results pinned forever.
-- [ ] Auto-backup: first run ~7 days late, deletes old backup before
+- [x] Auto-backup: first run ~7 days late, deletes old backup before
       writing new, no last-success surface.
-- [ ] Misc: User-Agent 0.1; hardcoded English (PodcastScreen selection/
+- [x] Misc: User-Agent 0.1; hardcoded English (PodcastScreen selection/
       retention labels, explainSmartPlayEntry, swipe labels, "1 shows"
       plurals); notification permission with empty callback; repository
       flows rebuilt per recomposition; diagnostics disk check on main
       thread.
 
+
+Partially deferred within Wave 4 (tracked, not forgotten):
+- Inbox rows: go-to-podcast needs a navigation callback InboxScreen
+  doesn't receive yet.
+- PLAYER widget responsive sizing (drop Done/seeks when narrow).
+- rememberSaveable: primitives covered; complex dialog states (rule
+  editor entity, multi-select lists) still reset on rotation.
+- Feedback unification landed for Settings; History/Downloads remain
+  snackbar-less for their minor actions.
+- One shared MediaItem builder (two near-duplicates remain; both now
+  route URIs through playableUri, which removes the behavioral drift).
+- Hardcoded-English stragglers: explainSmartPlayEntry, swipe-action
+  labels, "1 shows"-style plurals in two notification strings.
+- Bottom-bar tab highlight when opening a podcast from the queue.
 ## Noted, deliberately deferred
 
 - Media3 swallowing FGS denial into a pause (upstream behavior; mitigated

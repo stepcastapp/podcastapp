@@ -108,6 +108,8 @@ fun SmartPlayRow(
             // starting a SmartPlay replaces a possibly hand-curated queue —
             // that must never be silent or unrecoverable
             val before = repository.queueSnapshot().map { it.id }
+            // undo must bring back what was PLAYING too, not just the queue
+            val prevEpisodeId = player.state.value.episodeId
             repository.replaceQueue(
                 episodes.filter { it.id != head.id }.map { it.id }
             )
@@ -127,6 +129,12 @@ fun SmartPlayRow(
                 )
                 if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                     repository.replaceQueue(before)
+                    // play() resumes from the saved position automatically
+                    prevEpisodeId?.let { prevId ->
+                        repository.episode(prevId)?.let { ep ->
+                            player.play(ep, repository.podcast(ep.podcastId))
+                        }
+                    }
                 }
             }
         }

@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.stepcast.app.data.AppSettings
 import com.stepcast.app.data.PodcastRepository
+import com.stepcast.app.ui.Formatters
 import com.stepcast.app.ui.PlayerConnection
 import com.stepcast.app.ui.progressBorder
 import com.stepcast.app.ui.theme.EmptyState
@@ -166,17 +167,16 @@ fun QueueScreen(
         }
         if (queue.isNotEmpty()) {
             val remainMs = queue.sumOf { (it.durationMs - it.positionMs).coerceAtLeast(0L) }
-            val hours = remainMs / 3_600_000
-            val minutes = (remainMs % 3_600_000) / 60_000
-            val remainLabel = if (hours > 0) {
-                stringResource(R.string.hours_minutes_compact, hours, minutes)
-            } else {
-                stringResource(R.string.minutes_compact, minutes)
-            }
+            val remainLabel = Formatters.duration(remainMs)
+            val countLabel = pluralStringResource(
+                R.plurals.episodes_count, queue.size, queue.size
+            )
             Text(
-                pluralStringResource(
-                    R.plurals.episodes_count, queue.size, queue.size
-                ) + " · " + stringResource(R.string.time_to_go, remainLabel),
+                if (remainLabel.isEmpty()) {
+                    countLabel // durations all unknown — no "to go" estimate
+                } else {
+                    countLabel + " · " + stringResource(R.string.time_to_go, remainLabel)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp)
@@ -467,6 +467,14 @@ private fun QueueList(
                         onClick = {
                             menuForId = null
                             onPodcastClick(episode.podcastId)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.mark_played)) },
+                        onClick = {
+                            menuForId = null
+                            // setPlayed also drops it from the queue
+                            scope.launch { repository.setPlayed(episode.id, true) }
                         }
                     )
                     // triage in PLAY order ("before" plays sooner), so the

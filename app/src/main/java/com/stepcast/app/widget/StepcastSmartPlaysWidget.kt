@@ -3,21 +3,20 @@ package com.stepcast.app.widget
 import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.unit.dp
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
 import androidx.glance.ImageProvider
-import androidx.glance.action.ActionParameters
-import androidx.glance.action.actionParametersOf
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
-import androidx.glance.appwidget.action.ActionCallback
-import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
+import androidx.glance.currentState
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
@@ -29,13 +28,13 @@ import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.size
 import androidx.glance.layout.width
+import androidx.glance.state.PreferencesGlanceStateDefinition
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.Image
 import com.stepcast.app.R
 import com.stepcast.app.StepcastApplication
-import com.stepcast.app.playback.CommandReceiver
 import com.stepcast.app.ui.MainActivity
 
 /**
@@ -44,17 +43,25 @@ import com.stepcast.app.ui.MainActivity
  */
 class StepcastSmartPlaysWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StepcastSmartPlaysWidget()
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        removeWidgetOpacityPrefs(context, appWidgetIds)
+    }
 }
 
 class StepcastSmartPlaysWidget : GlanceAppWidget() {
 
+    override val stateDefinition = PreferencesGlanceStateDefinition
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val app = context.applicationContext as StepcastApplication
-        val names = runCatching {
-            app.repository.smartPlayList().map { it.name }
-        }.getOrDefault(emptyList())
-        val opacity = widgetOpacity(context, id)
         provideContent {
+            // read INSIDE the composition — Glance keeps the session alive
+            // between updates, so anything read out here in provideGlance
+            // would be frozen for the widget's lifetime (see the note on
+            // updateAllStepcastWidgets, which seeds this state)
+            val names = smartPlayNamesFrom(context, currentState())
+            val opacity = widgetOpacity(context, id)
             GlanceTheme {
                 Column(
                     modifier = GlanceModifier
@@ -138,22 +145,23 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
     }
 
     companion object {
-        val SMARTPLAY_NAME_KEY = ActionParameters.Key<String>("smartplayName")
+        /** "\n"-joined SmartPlay names, seeded by updateAllStepcastWidgets. */
+        val P_SMARTPLAY_NAMES = stringPreferencesKey("smartPlayNames")
     }
 }
 
-/** Routes through CommandReceiver — the same path as external automation. */
-class StartSmartPlayAction : ActionCallback {
-    override suspend fun onAction(
-        context: Context,
-        glanceId: GlanceId,
-        parameters: ActionParameters
-    ) {
-        val name = parameters[StepcastSmartPlaysWidget.SMARTPLAY_NAME_KEY] ?: return
-        context.sendBroadcast(
-            Intent(context, CommandReceiver::class.java)
-                .setAction(CommandReceiver.ACTION_START_SMART_PLAY)
-                .putExtra("smartplay", name)
-        )
-    }
+/**
+ * Names for one render: the widget's Glance state, falling back to a
+ * one-time direct load for a freshly placed widget that hasn't been
+ * seeded yet (same shape as widgetStateFrom's fallback).
+ */
+private fun smartPlayNamesFrom(context: Context, prefs: Preferences): List<String> {
+    val joined = prefs[StepcastSmartPlaysWidget.P_SMARTPLAY_NAMES]
+        ?: return runCatching {
+            kotlinx.coroutines.runBlocking {
+                (context.applicationContext as StepcastApplication)
+                    .repository.smartPlayList().map { it.name }
+            }
+        }.getOrDefault(emptyList())
+    return joined.split("\n").filter { it.isNotEmpty() }
 }

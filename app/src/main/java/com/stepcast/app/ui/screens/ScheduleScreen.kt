@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +40,7 @@ import com.stepcast.app.data.AppSettings
 import com.stepcast.app.data.Podcast
 import com.stepcast.app.data.PodcastRepository
 import com.stepcast.app.sync.RefreshSchedule
+import com.stepcast.app.sync.RefreshWorker
 import com.stepcast.app.sync.ReleasePattern
 import com.stepcast.app.sync.ScheduleEngine
 import com.stepcast.app.ui.theme.ScreenTitle
@@ -104,7 +106,10 @@ fun ScheduleScreen(
     val reasonWeekly = stringResource(R.string.reason_weekly)
     val reasonBaseline = stringResource(R.string.reason_baseline)
     val reasonCheckpoint = stringResource(R.string.reason_checkpoint)
-    LaunchedEffect(podcasts, patterns, checkpointTimes, checkpointEnabled, quietOn) {
+    LaunchedEffect(
+        podcasts, patterns, checkpointTimes, checkpointEnabled,
+        quietOn, quietStart, quietEnd
+    ) {
         timeline = withContext(Dispatchers.IO) {
             val cfg = ScheduleEngine.Config(
                 checkpointMinutes = AppSettings.enabledCheckpointMinutes(),
@@ -120,8 +125,13 @@ fun ScheduleScreen(
             // one row per enabled checkpoint (they cover every Automatic show)
             AppSettings.checkpointTimes.forEachIndexed { i, minutes ->
                 if (AppSettings.checkpointEnabled.getOrElse(i) { false }) {
-                    val slot =
-                        RefreshSchedule.latestSlotMs(minutes, 24, now) + 86_400_000L
+                    // a checkpoint inside quiet hours actually fires at the
+                    // quiet end — show the time the engine will use
+                    val slot = ScheduleEngine.quietEndAfter(
+                        RefreshSchedule.latestSlotMs(minutes, 24, now) + 86_400_000L,
+                        cfg,
+                        java.util.TimeZone.getDefault()
+                    )
                     rows += TimelineRow(
                         slot,
                         reasonCheckpoint
@@ -192,7 +202,10 @@ fun ScheduleScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item { ScheduleHeader(stringResource(R.string.schedule_next_checks)) }
-            items(timeline, key = { "${it.timeMs}-${it.label}" }) { row ->
+            itemsIndexed(
+                timeline,
+                key = { index, row -> "${row.timeMs}-${row.label}-$index" }
+            ) { _, row ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
@@ -203,12 +216,23 @@ fun ScheduleScreen(
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.width(76.dp)
                     )
-                    Text(
-                        row.label,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            row.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            android.text.format.DateUtils.getRelativeTimeSpanString(
+                                row.timeMs,
+                                System.currentTimeMillis(),
+                                android.text.format.DateUtils.MINUTE_IN_MILLIS
+                            ).toString(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -230,6 +254,7 @@ fun ScheduleScreen(
                         checked = checkpointEnabled.getOrElse(i) { false },
                         onCheckedChange = {
                             AppSettings.setCheckpointEnabled(context, i, it)
+                            RefreshWorker.replan(context)
                         }
                     )
                 }
@@ -257,6 +282,7 @@ fun ScheduleScreen(
                         checked = quietOn,
                         onCheckedChange = {
                             AppSettings.setQuietHoursEnabled(context, it)
+                            RefreshWorker.replan(context)
                         }
                     )
                 }
@@ -299,6 +325,7 @@ fun ScheduleScreen(
             onDismiss = { checkpointEdit = -1 },
             onSave = { minutes ->
                 AppSettings.setCheckpointTime(context, i, minutes)
+                RefreshWorker.replan(context)
                 checkpointEdit = -1
             }
         )
@@ -311,6 +338,7 @@ fun ScheduleScreen(
             onDismiss = { quietEdit = false },
             onSave = { start, end ->
                 AppSettings.setQuietHours(context, start, end)
+                RefreshWorker.replan(context)
                 quietEdit = false
             }
         )
@@ -325,6 +353,7 @@ fun ScheduleScreen(
             onSave = { mode, param ->
                 scope.launch {
                     repository.setScheduleRule(podcast.id, mode, param)
+                    RefreshWorker.replan(context)
                 }
                 ruleFor = null
             }

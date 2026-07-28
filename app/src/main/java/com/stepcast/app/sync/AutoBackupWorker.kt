@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -34,7 +36,10 @@ class AutoBackupWorker(
 
     companion object {
         private const val FILE_NAME = "stepcast-auto-backup.json"
+        private const val TMP_NAME = "stepcast-auto-backup.json.tmp"
+        private const val PREV_NAME = "stepcast-auto-backup.prev.json"
         private const val WORK_NAME = "auto-backup"
+        private const val WORK_NAME_NOW = "auto-backup-now"
 
         /**
          * Writes the backup into the configured folder right now. Returns
@@ -51,26 +56,43 @@ class AutoBackupWorker(
                 val tree = DocumentFile.fromTreeUri(context, Uri.parse(folderUri))
                     ?.takeIf { it.canWrite() }
                     ?: return "Backup folder is gone or permission was revoked"
-                tree.findFile(FILE_NAME)?.delete()
-                // name without extension: createFile appends it from the mime
-                val file = tree
-                    .createFile("application/json", FILE_NAME.removeSuffix(".json"))
+                // write into a temp first: a failure mid-export must not
+                // destroy the existing backup (the old delete-then-create
+                // left NOTHING behind when the export died)
+                tree.findFile(TMP_NAME)?.delete()
+                val tmp = tree.createFile("application/json", TMP_NAME)
                     ?: return "Couldn't create the backup file"
-                StepcastBackup.export(context, repository, file.uri)
+                StepcastBackup.export(context, repository, tmp.uri)
+                // keep one previous generation, then swap the fresh file in
+                tree.findFile(PREV_NAME)?.delete()
+                tree.findFile(FILE_NAME)?.renameTo(PREV_NAME)
+                tmp.renameTo(FILE_NAME)
+                AppSettings.setLastAutoBackupMs(context, System.currentTimeMillis())
                 null
             }.getOrElse { it.message ?: "Backup failed" }
         }
 
         fun schedule(context: Context) {
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            val workManager = WorkManager.getInstance(context)
+            workManager.enqueueUniquePeriodicWork(
                 WORK_NAME,
                 ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<AutoBackupWorker>(7, TimeUnit.DAYS).build()
             )
+            // first enable shouldn't wait a week for its first backup; guard
+            // on "never backed up" because schedule() also runs at app start
+            if (AppSettings.lastAutoBackupMs == 0L) {
+                workManager.enqueueUniqueWork(
+                    WORK_NAME_NOW,
+                    ExistingWorkPolicy.KEEP,
+                    OneTimeWorkRequestBuilder<AutoBackupWorker>().build()
+                )
+            }
         }
 
         fun cancel(context: Context) {
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME_NOW)
         }
     }
 }

@@ -79,6 +79,10 @@ object AppSettings {
     var autoBackupFolder by mutableStateOf<String?>(null)
         private set
 
+    /** Wall-clock ms of the last successful automatic backup; 0 = never. */
+    var lastAutoBackupMs by mutableStateOf(0L)
+        private set
+
     /**
      * "Fresh by" checkpoints — the four named daily moments (Morning,
      * Midday, Evening, Night) as minutes after midnight, plus which are
@@ -125,6 +129,7 @@ object AppSettings {
         swipeRightAction = p[stringPreferencesKey(KEY_SWIPE_RIGHT)] ?: SWIPE_PLAYED
         swipeLeftAction = p[stringPreferencesKey(KEY_SWIPE_LEFT)] ?: SWIPE_QUEUE
         autoBackupFolder = p[stringPreferencesKey(KEY_AUTO_BACKUP)]
+        lastAutoBackupMs = p[longPreferencesKey(KEY_LAST_AUTO_BACKUP)] ?: 0L
         continueCurrentShow = p[booleanPreferencesKey(KEY_CONTINUE_SHOW)] ?: false
         categoryRefreshButtons = p[booleanPreferencesKey(KEY_CAT_REFRESH)] ?: false
         libraryCompactList = p[booleanPreferencesKey(KEY_LIB_COMPACT)] ?: false
@@ -219,6 +224,11 @@ object AppSettings {
                 if (treeUri == null) it.remove(key) else it[key] = treeUri
             }
         }
+    }
+
+    fun setLastAutoBackupMs(context: Context, ms: Long) {
+        lastAutoBackupMs = ms
+        putLong(context, KEY_LAST_AUTO_BACKUP, ms)
     }
 
     fun setDefaultRefreshHours(context: Context, hours: Int) {
@@ -334,6 +344,13 @@ object AppSettings {
         }
     }
 
+    private fun putLong(context: Context, key: String, value: Long) {
+        val appContext = context.applicationContext
+        prefsWriteScope.launch {
+            appContext.settingsStore.edit { it[longPreferencesKey(key)] = value }
+        }
+    }
+
     private fun putBoolean(context: Context, key: String, value: Boolean) {
         val appContext = context.applicationContext
         prefsWriteScope.launch {
@@ -367,6 +384,7 @@ object AppSettings {
     private const val KEY_SWIPE_RIGHT = "swipeRightAction"
     private const val KEY_SWIPE_LEFT = "swipeLeftAction"
     private const val KEY_AUTO_BACKUP = "autoBackupFolder"
+    private const val KEY_LAST_AUTO_BACKUP = "last_auto_backup_ms"
     private const val KEY_CONTINUE_SHOW = "continueCurrentShow"
     private const val KEY_CAT_REFRESH = "categoryRefreshButtons"
     private const val KEY_LIB_COMPACT = "libraryCompactList"

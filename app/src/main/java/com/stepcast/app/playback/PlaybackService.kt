@@ -232,6 +232,21 @@ class PlaybackService : MediaLibraryService() {
                             .build()
                     )
                 }
+                // parity with mediaNotificationButtons(): the pre-13
+                // notification gets the per-show ad jump too
+                if (currentAdJumpSec > 0) {
+                    add(
+                        CommandButton.Builder()
+                            .setSessionCommand(
+                                SessionCommand(ACTION_AD_JUMP, Bundle.EMPTY)
+                            )
+                            .setIconResId(R.drawable.ic_notif_ad_jump)
+                            .setDisplayName(
+                                getString(R.string.ad_jump_cd, currentAdJumpSec)
+                            )
+                            .build()
+                    )
+                }
             }
             return ImmutableList.copyOf(buttons)
         }
@@ -322,7 +337,15 @@ class PlaybackService : MediaLibraryService() {
     private fun doneAndDeleteCurrent() {
         val player = mediaSession?.player ?: return
         val episodeId = player.currentMediaItem?.mediaId?.toLongOrNull() ?: return
-        if (player.hasNextMediaItem()) player.seekToNextMediaItem() else player.pause()
+        if (player.hasNextMediaItem()) {
+            player.seekToNextMediaItem()
+        } else {
+            // last queued episode: clear it out — a bare pause left the
+            // finished episode stuck in the pill/notification/widgets
+            player.pause()
+            player.clearMediaItems()
+            publishWidgetState()
+        }
         serviceScope.launch(Dispatchers.IO) {
             app.repository.markPlayed(episodeId, "done-btn")
             app.repository.deleteDownload(episodeId)
@@ -445,12 +468,15 @@ class PlaybackService : MediaLibraryService() {
             }
             if (customCommand.customAction == ACTION_START_SMARTPLAY) {
                 val name = args.getString(KEY_SMARTPLAY_NAME)
-                    ?: return Futures.immediateFuture(
+                val id = args.getLong(KEY_SMARTPLAY_ID, 0L)
+                if (name == null && id <= 0L) {
+                    return Futures.immediateFuture(
                         SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE)
                     )
+                }
                 // hand back the in-flight future so the caller stays connected
                 // until playback actually begins (see startSmartPlayByName)
-                return startSmartPlayByName(name)
+                return startSmartPlayByName(name, id)
             }
             if (customCommand.customAction == ACTION_REFRESH_NOTIF_BUTTONS) {
                 // re-resolve per-show values too (ad jump edited mid-episode)
@@ -503,8 +529,20 @@ class PlaybackService : MediaLibraryService() {
                     parentId == QUEUE_ID ->
                         app.repository.queueSnapshot().map { episodeToItem(it) }
                     parentId == SMARTPLAYS_ID ->
+                        // PLAYABLE leaves, not folders: in a car "News" should
+                        // be one tap to start, not a folder to dig through —
+                        // onAddMediaItems expands the id into the whole queue
                         app.repository.smartPlayList().map { smartPlay ->
-                            browsableItem("$SMARTPLAY_PREFIX${smartPlay.id}", smartPlay.name)
+                            MediaItem.Builder()
+                                .setMediaId("$SMARTPLAY_PREFIX${smartPlay.id}")
+                                .setMediaMetadata(
+                                    MediaMetadata.Builder()
+                                        .setTitle(smartPlay.name)
+                                        .setIsBrowsable(false)
+                                        .setIsPlayable(true)
+                                        .build()
+                                )
+                                .build()
                         }
                     parentId.startsWith(SMARTPLAY_PREFIX) -> {
                         val id = parentId.removePrefix(SMARTPLAY_PREFIX).toLongOrNull()
@@ -563,17 +601,38 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>
         ): ListenableFuture<List<MediaItem>> =
             serviceScope.future {
-                mediaItems.mapNotNull { item ->
-                    if (item.localConfiguration != null) {
-                        item
-                    } else {
-                        val episode = item.mediaId.toLongOrNull()
-                            ?.let { app.repository.episode(it) }
-                        when {
-                            episode == null -> item
-                            // streaming-off applies to Auto/Bluetooth picks too
-                            app.repository.playableUri(episode) == null -> null
-                            else -> episodeToItem(episode)
+                // flatMap: a SmartPlay leaf expands into its whole episode
+                // list; everything else stays one-in-one-out (or drops)
+                mediaItems.flatMap { item ->
+                    when {
+                        item.localConfiguration != null -> listOf(item)
+                        item.mediaId.startsWith(SMARTPLAY_PREFIX) -> {
+                            val smartPlay = item.mediaId
+                                .removePrefix(SMARTPLAY_PREFIX).toLongOrNull()
+                                ?.let { app.repository.smartPlay(it) }
+                            if (smartPlay == null) {
+                                emptyList()
+                            } else {
+                                val episodes = app.repository.episodesFor(smartPlay)
+                                    .filter { app.repository.playableUri(it) != null }
+                                if (episodes.isNotEmpty()) {
+                                    app.repository.replaceQueue(
+                                        episodes.drop(1).map { it.id }
+                                    )
+                                }
+                                episodes.map { episodeToItem(it) }
+                            }
+                        }
+                        else -> {
+                            val episode = item.mediaId.toLongOrNull()
+                                ?.let { app.repository.episode(it) }
+                            when {
+                                episode == null -> listOf(item)
+                                // streaming-off applies to Auto/Bluetooth picks too
+                                app.repository.playableUri(episode) == null ->
+                                    emptyList()
+                                else -> listOf(episodeToItem(episode))
+                            }
                         }
                     }
                 }
@@ -593,9 +652,19 @@ class PlaybackService : MediaLibraryService() {
             )
             .build()
 
-    private suspend fun episodesForBrowse(podcast: Podcast): List<MediaItem> =
-        app.repository.episodesNewestFirst(podcast.id, limit = 100)
-            .map { episodeToItem(it, podcast) }
+    private suspend fun episodesForBrowse(podcast: Podcast): List<MediaItem> {
+        // unplayed only, in the show's own listening order — the browse list
+        // should look like the podcast screen, not a raw newest-first dump
+        val unplayed = app.repository
+            .episodesNewestFirst(podcast.id, limit = Int.MAX_VALUE)
+            .filter { !it.played }
+        val ordered = if (podcast.sortOldestFirst) {
+            unplayed.sortedBy { it.pubDateMs }
+        } else {
+            unplayed
+        }
+        return ordered.take(100).map { episodeToItem(it, podcast) }
+    }
 
     /** Playable item with the same mediaId convention (plain episode id). */
     private suspend fun episodeToItem(episode: Episode, podcast: Podcast? = null): MediaItem {
@@ -1154,13 +1223,19 @@ class PlaybackService : MediaLibraryService() {
     // it, so on a cold start the service keeps a bound client for the whole
     // start — releasing it early (the old fixed 300ms grace) could let the OS
     // destroy the service mid-start, filling the queue but never starting play.
-    private fun startSmartPlayByName(name: String): ListenableFuture<SessionResult> =
+    private fun startSmartPlayByName(
+        name: String?,
+        id: Long = 0L
+    ): ListenableFuture<SessionResult> =
         serviceScope.future {
             var started: com.stepcast.app.data.SmartPlay? = null
             var knownName = false
             val episodes = withContext(Dispatchers.IO) {
-                val smartPlay = app.repository.smartPlayList()
-                    .firstOrNull { it.name.equals(name, ignoreCase = true) }
+                // id is authoritative (pinned shortcuts survive renames);
+                // name is the automation/back-compat path
+                val smartPlay = (if (id > 0L) app.repository.smartPlay(id) else null)
+                    ?: app.repository.smartPlayList()
+                        .firstOrNull { it.name.equals(name ?: "", ignoreCase = true) }
                     ?: return@withContext emptyList()
                 knownName = true
                 started = smartPlay
@@ -1223,6 +1298,7 @@ class PlaybackService : MediaLibraryService() {
         const val ACTION_REFRESH_NOTIF_BUTTONS =
             "com.stepcast.app.REFRESH_NOTIF_BUTTONS"
         const val KEY_SMARTPLAY_NAME = "smartplayName"
+        const val KEY_SMARTPLAY_ID = "smartplayId"
         const val KEY_SLEEP_MINUTES = "minutes"
         const val KEY_SLEEP_END_OF_EPISODE = "endOfEpisode"
 

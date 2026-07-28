@@ -1012,7 +1012,7 @@ class PodcastRepository(
         try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Stepcast/0.1")
+                .header("User-Agent", "Stepcast/0.5")
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
@@ -1250,7 +1250,7 @@ class PodcastRepository(
         withContext(Dispatchers.IO) {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Stepcast/0.1")
+                .header("User-Agent", "Stepcast/0.5")
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code} for $url")
@@ -1321,7 +1321,7 @@ class PodcastRepository(
     private fun fetchFeed(feedUrl: String): ParsedFeed {
         val request = Request.Builder()
             .url(feedUrl)
-            .header("User-Agent", "Stepcast/0.1")
+            .header("User-Agent", "Stepcast/0.5")
             .build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("HTTP ${response.code} for $feedUrl")

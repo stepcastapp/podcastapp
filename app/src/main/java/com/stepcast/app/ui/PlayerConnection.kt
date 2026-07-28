@@ -387,7 +387,14 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
     fun skipToNextAndDelete() {
         val c = controller ?: return
         val episodeId = c.currentMediaItem?.mediaId?.toLongOrNull() ?: return
-        if (c.hasNextMediaItem()) c.seekToNextMediaItem() else c.pause()
+        if (c.hasNextMediaItem()) {
+            c.seekToNextMediaItem()
+        } else {
+            // last queued episode: leaving the finished item as "current"
+            // kept it stuck in the pill/notification/widgets at its end
+            c.pause()
+            c.clearMediaItems()
+        }
         scope.launch {
             repository.markPlayed(episodeId, "done-ui")
             repository.deleteDownload(episodeId)

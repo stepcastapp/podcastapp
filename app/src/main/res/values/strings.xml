@@ -72,7 +72,7 @@
     <string name="next_chapter">Next chapter</string>
     <string name="next_episode">Next episode</string>
     <string name="no_categories_yet_assign_one_from_a_podc">No categories yet — assign one from a podcast\'s settings.</string>
-    <string name="no_downloaded_episodes">No downloaded episodes.</string>
+    <string name="no_downloaded_episodes">No downloaded episodes — use the download action on any episode.</string>
     <string name="none">None</string>
     <string name="nothing_downloading_right_now">Nothing downloading right now.</string>
     <string name="now_playing">Now playing</string>
@@ -427,6 +427,20 @@
     <string name="diagnostics">Diagnostics</string>
     <string name="share_playback_journal">Share journal</string>
     <string name="journal_empty">Journal is empty — nothing has played since this build installed.</string>
+    <!-- review wave 4 -->
+    <string name="confirm">Confirm</string>
+    <string name="unsubscribe_confirm_title">Unsubscribe from %1$s?</string>
+    <string name="unsubscribe_confirm_body">This removes the subscription, its episodes, downloads, and listening history. This can\'t be undone.</string>
+    <string name="mark_all_played_confirm_title">Mark all episodes played?</string>
+    <string name="mark_all_played_confirm_body">Every unplayed episode of this show will be marked played and its position cleared.</string>
+    <string name="remove_from_up_next">Remove from Up Next</string>
+    <string name="discover_unreachable">Couldn\'t reach the directory — check your connection.</string>
+    <string name="no_episodes_yet">No episodes yet. Pull the feed again in a moment.</string>
+    <string name="remove_category_confirm_title">Remove category %1$s?</string>
+    <string name="remove_category_confirm_body">Podcasts keep their other categories; SmartPlay rules scoped to this category are deleted.</string>
+    <string name="follow_transcript">Follow along</string>
+    <string name="this_episode_only">Just this episode</string>
+    <string name="last_backup_at">Last automatic backup: %1$s</string>
     <string name="sort_name_asc">Name A→Z</string>
     <string name="sort_name_desc">Name Z→A</string>
     <string name="sort_oldest">Oldest first</string>

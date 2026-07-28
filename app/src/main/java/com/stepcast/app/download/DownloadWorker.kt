@@ -90,7 +90,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_RUNNING)
             val request = Request.Builder()
                 .url(episode.audioUrl)
-                .header("User-Agent", "Stepcast/0.1")
+                .header("User-Agent", "Stepcast/0.5")
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")

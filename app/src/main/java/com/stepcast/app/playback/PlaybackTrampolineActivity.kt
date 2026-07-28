@@ -48,8 +48,9 @@ class PlaybackTrampolineActivity : ComponentActivity() {
             return
         }
         val smartPlay = intent.getStringExtra("smartplay")
+        val smartPlayId = intent.getLongExtra("smartplayId", 0L)
         val command = intent.getStringExtra("command")
-        if (smartPlay == null && command == null) {
+        if (smartPlay == null && smartPlayId <= 0L && command == null) {
             finish()
             return
         }
@@ -67,16 +68,18 @@ class PlaybackTrampolineActivity : ComponentActivity() {
                 ).buildAsync().await()
                 try {
                     when {
-                        smartPlay != null -> {
+                        smartPlay != null || smartPlayId > 0L -> {
                             val future = controller.sendCustomCommand(
                                 SessionCommand(
                                     PlaybackService.ACTION_START_SMARTPLAY,
                                     Bundle.EMPTY
                                 ),
                                 Bundle().apply {
-                                    putString(
-                                        PlaybackService.KEY_SMARTPLAY_NAME, smartPlay
-                                    )
+                                    smartPlay?.let {
+                                        putString(PlaybackService.KEY_SMARTPLAY_NAME, it)
+                                    }
+                                    // id wins over name (survives renames)
+                                    putLong(PlaybackService.KEY_SMARTPLAY_ID, smartPlayId)
                                 }
                             )
                             // stay resumed (= app foreground) until the service

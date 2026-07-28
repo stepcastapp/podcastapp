@@ -88,7 +88,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // categories created before metas existed get rows on first sight
-    LaunchedEffect(podcasts.size) { repository.ensureCategoryMetas() }
+    LaunchedEffect(podcasts) { repository.ensureCategoryMetas() }
 
     // multi-select for bulk category assignment
     val selected = remember { mutableStateListOf<Long>() }
@@ -368,7 +368,7 @@ private fun PodcastGrid(
     ) {
         for ((category, members) in byCategory) {
             val isCollapsed = category in collapsed
-            item(key = "header-$category", span = { GridItemSpan(maxLineSpan) }) {
+            item(key = "cat-header-$category", span = { GridItemSpan(maxLineSpan) }) {
                 // tap the header to OPEN the merged category view; only the
                 // leading chevron collapses/expands the tile list
                 Row(
@@ -461,7 +461,7 @@ private fun PodcastGrid(
         }
         if (uncategorized.isNotEmpty()) {
             if (byCategory.isNotEmpty()) {
-                item(key = "header-uncategorized", span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "section-uncategorized", span = { GridItemSpan(maxLineSpan) }) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = 4.dp)
@@ -508,7 +508,7 @@ private fun PodcastGrid(
             .filter { it.localFolderUri == null && it.consecutiveFailures >= 3 }
             .sortedBy { it.title.lowercase() }
         if (failing.isNotEmpty()) {
-            item(key = "header-attention", span = { GridItemSpan(maxLineSpan) }) {
+            item(key = "section-attention", span = { GridItemSpan(maxLineSpan) }) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier

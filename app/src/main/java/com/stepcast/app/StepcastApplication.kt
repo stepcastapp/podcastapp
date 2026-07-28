@@ -52,9 +52,7 @@ class StepcastApplication : Application(), coil.ImageLoaderFactory {
         // launcher shortcuts + the SmartPlays widget track the SmartPlay list
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             repository.smartPlays.collect { plays ->
-                SmartPlayShortcuts.publish(
-                    this@StepcastApplication, plays.map { it.name }
-                )
+                SmartPlayShortcuts.publish(this@StepcastApplication, plays)
                 runCatching {
                     com.stepcast.app.widget.StepcastSmartPlaysWidget()
                         .updateAll(this@StepcastApplication)

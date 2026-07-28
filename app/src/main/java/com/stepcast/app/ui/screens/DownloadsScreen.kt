@@ -19,6 +19,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import com.stepcast.app.R
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,13 +60,37 @@ fun DownloadsScreen(repository: PodcastRepository) {
     val waiting = activity.filter { it.isDownloading && it.downloadProgress <= 0 }
     val failed = activity.filter { it.downloadStatus == Episode.DOWNLOAD_FAILED }
     val wifiOnly = AppSettings.wifiOnlyDownloads
-    val onMeteredNetwork = remember {
-        runCatching {
-            val cm = context.getSystemService(
+    // live metered-network state: the "waiting for Wi-Fi" explanation must
+    // flip when the user walks between Wi-Fi and mobile data
+    var onMeteredNetwork by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        val cm = runCatching {
+            context.getSystemService(
                 android.content.Context.CONNECTIVITY_SERVICE
             ) as android.net.ConnectivityManager
-            cm.isActiveNetworkMetered
-        }.getOrDefault(false)
+        }.getOrNull()
+        val callback = object : android.net.ConnectivityManager.NetworkCallback() {
+            private fun update() {
+                onMeteredNetwork =
+                    runCatching { cm?.isActiveNetworkMetered == true }
+                        .getOrDefault(false)
+            }
+            override fun onAvailable(network: android.net.Network) = update()
+            override fun onCapabilitiesChanged(
+                network: android.net.Network,
+                networkCapabilities: android.net.NetworkCapabilities
+            ) = update()
+            override fun onLost(network: android.net.Network) = update()
+        }
+        val registered = cm != null && runCatching {
+            onMeteredNetwork = cm.isActiveNetworkMetered
+            cm.registerDefaultNetworkCallback(callback)
+        }.isSuccess
+        onDispose {
+            if (registered) {
+                runCatching { cm?.unregisterNetworkCallback(callback) }
+            }
+        }
     }
     val waitingForWifi = wifiOnly && onMeteredNetwork && waiting.isNotEmpty()
 

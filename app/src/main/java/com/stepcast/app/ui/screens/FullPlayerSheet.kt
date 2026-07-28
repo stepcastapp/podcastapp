@@ -78,7 +78,7 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.coroutines.launch
 
-private val speedChoices = listOf(1.0f, 1.2f, 1.5f, 1.8f, 2.0f, 2.5f, 3.0f)
+private val speedChoices = listOf(0.8f, 1.0f, 1.2f, 1.5f, 1.8f, 2.0f, 2.5f, 3.0f)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -172,7 +172,6 @@ fun FullPlayerSheet(
                         if (dragAmount > 14f) currentOnDismiss()
                     }
                 }
-                .clickable { currentOnDismiss() }
                 .padding(vertical = 10.dp)
         ) {
             androidx.compose.foundation.layout.Box(
@@ -449,6 +448,7 @@ fun FullPlayerSheet(
                     )
                 }
                 if (speedOpen) {
+                    var thisEpisodeOnly by remember { mutableStateOf(false) }
                     AlertDialog(
                         onDismissRequest = { speedOpen = false },
                         title = { Text(stringResource(R.string.playback_speed)) },
@@ -464,33 +464,54 @@ fun FullPlayerSheet(
                                             onClick = {
                                                 player.setSpeed(choice)
                                                 // like the skips dialog: the
-                                                // choice sticks to this feed
-                                                podcast?.let { p ->
+                                                // choice sticks to this feed —
+                                                // resolved via the episode, so
+                                                // the write can't be dropped
+                                                // while [podcast] still loads
+                                                if (!thisEpisodeOnly) {
                                                     scope.launch {
-                                                        repository
-                                                            .setPlaybackSpeed(p.id, choice)
+                                                        state.episodeId?.let { epId ->
+                                                            repository.episode(epId)
+                                                                ?.podcastId
+                                                                ?.let { podId ->
+                                                                    repository
+                                                                        .setPlaybackSpeed(
+                                                                            podId, choice
+                                                                        )
+                                                                }
+                                                        }
                                                     }
                                                 }
                                                 speedOpen = false
                                             },
                                             label = {
                                                 Text(
-                                                    "${trimSpeed(choice)}x",
+                                                    "${trimSpeed(choice)}×",
                                                     fontFamily = FontFamily.Monospace
                                                 )
                                             }
                                         )
                                     }
                                 }
-                                podcast?.let { p ->
-                                    Text(
-                                        stringResource(
-                                            R.string.applies_to_every_episode_of, p.title
-                                        ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = 8.dp)
-                                    )
+                                FilterChip(
+                                    selected = thisEpisodeOnly,
+                                    onClick = { thisEpisodeOnly = !thisEpisodeOnly },
+                                    label = {
+                                        Text(stringResource(R.string.this_episode_only))
+                                    },
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                                if (!thisEpisodeOnly) {
+                                    podcast?.let { p ->
+                                        Text(
+                                            stringResource(
+                                                R.string.applies_to_every_episode_of, p.title
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(top = 8.dp)
+                                        )
+                                    }
                                 }
                             }
                         },
@@ -712,6 +733,7 @@ fun FullPlayerSheet(
 
     if (sleepDialogOpen) {
         SleepTimerDialog(
+            state = state,
             onDismiss = { sleepDialogOpen = false },
             onPick = { minutes, endOfEpisode ->
                 sleepDialogOpen = false
@@ -802,11 +824,22 @@ private fun TranscriptDialog(
     } else {
         -1
     }
-    androidx.compose.runtime.LaunchedEffect(activeIndex) {
-        if (activeIndex >= 0 && !listState.isScrollInProgress) {
+    var followTranscript by remember { mutableStateOf(true) }
+    var autoScrolling by remember { mutableStateOf(false) }
+    // a manual scroll turns follow-along off — but the auto-scroller's own
+    // animations also flip isScrollInProgress, so they flag themselves
+    androidx.compose.runtime.LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress && !autoScrolling) {
+            followTranscript = false
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(activeIndex, followTranscript) {
+        if (followTranscript && activeIndex >= 0) {
+            autoScrolling = true
             runCatching {
                 listState.animateScrollToItem((activeIndex - 2).coerceAtLeast(0))
             }
+            autoScrolling = false
         }
     }
     AlertDialog(
@@ -821,44 +854,51 @@ private fun TranscriptDialog(
                 loaded.isEmpty() -> Text(
                     stringResource(R.string.transcript_failed, "")
                 )
-                else -> LazyColumn(
-                    state = listState,
-                    modifier = Modifier.heightIn(max = 440.dp)
-                ) {
-                    itemsIndexed(loaded) { index, cue ->
-                        val active = index == activeIndex
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = cue.startMs >= 0) {
-                                    onSeek(cue.startMs)
+                else -> Column {
+                    if (timed && !followTranscript) {
+                        TextButton(onClick = { followTranscript = true }) {
+                            Text(stringResource(R.string.follow_transcript))
+                        }
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.heightIn(max = 440.dp)
+                    ) {
+                        itemsIndexed(loaded) { index, cue ->
+                            val active = index == activeIndex
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(enabled = cue.startMs >= 0) {
+                                        onSeek(cue.startMs)
+                                    }
+                                    .padding(vertical = 4.dp, horizontal = 2.dp)
+                            ) {
+                                if (cue.startMs >= 0) {
+                                    Text(
+                                        formatTime(cue.startMs),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (active) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.padding(end = 8.dp, top = 2.dp)
+                                    )
                                 }
-                                .padding(vertical = 4.dp, horizontal = 2.dp)
-                        ) {
-                            if (cue.startMs >= 0) {
                                 Text(
-                                    formatTime(cue.startMs),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
+                                    cue.text,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = if (active) {
                                         MaterialTheme.colorScheme.primary
                                     } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                        MaterialTheme.colorScheme.onSurface
                                     },
-                                    modifier = Modifier.padding(end = 8.dp, top = 2.dp)
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
-                            Text(
-                                cue.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (active) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
                         }
                     }
                 }
@@ -872,24 +912,45 @@ private fun TranscriptDialog(
 
 @Composable
 private fun SleepTimerDialog(
+    state: PlayerUiState,
     onDismiss: () -> Unit,
     onPick: (minutes: Int, endOfEpisode: Boolean) -> Unit
 ) {
+    // which option is armed: the remaining minutes round UP into their
+    // bucket, so a timer started at 30 stays marked "30 minutes" as it runs
+    val minuteOptions = listOf(15, 30, 45, 60, 90)
+    val minutesLeft = state.sleepEndsAtMs?.let {
+        ((it - System.currentTimeMillis()) / 60_000L + 1).coerceAtLeast(1)
+    }
+    val armedMinutes = if (state.sleepAtEpisodeEnd) {
+        null
+    } else {
+        minutesLeft?.let { left -> minuteOptions.firstOrNull { left <= it } }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.sleep_timer)) },
         text = {
             Column {
                 TextButton(onClick = { onPick(0, false) }) { Text(stringResource(R.string.off)) }
-                for (m in listOf(15, 30, 45, 60, 90)) {
+                for (m in minuteOptions) {
                     TextButton(onClick = { onPick(m, false) }) {
-                        Text(pluralStringResource(R.plurals.minutes_count, m, m))
+                        Text(
+                            (if (m == armedMinutes) "✓ " else "") +
+                                pluralStringResource(R.plurals.minutes_count, m, m)
+                        )
                     }
                 }
-                TextButton(onClick = { onPick(0, true) }) { Text(stringResource(R.string.end_of_episode)) }
+                TextButton(onClick = { onPick(0, true) }) {
+                    Text(
+                        (if (state.sleepAtEpisodeEnd) "✓ " else "") +
+                            stringResource(R.string.end_of_episode)
+                    )
+                }
             }
         },
-        confirmButton = {
+        confirmButton = {},
+        dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )

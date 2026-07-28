@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,7 +73,7 @@ fun PodcastScreen(
 ) {
     val podcast by repository.observePodcast(podcastId).collectAsState(initial = null)
     // paged: a 2000-episode feed must not inflate 2000 rows at once
-    var episodeLimit by remember { mutableStateOf(100) }
+    var episodeLimit by rememberSaveable { mutableStateOf(100) }
     val oldestFirst = podcast?.sortOldestFirst == true
     val episodes by remember(podcastId, episodeLimit, oldestFirst) {
         repository.episodesForPaged(podcastId, oldestFirst, episodeLimit)
@@ -82,7 +83,7 @@ fun PodcastScreen(
     // header counts come straight from the DB — episodes above is paged
     val counts by remember(podcastId) { repository.episodeCounts(podcastId) }
         .collectAsState(initial = null)
-    var downloadedOnly by remember { mutableStateOf(false) }
+    var downloadedOnly by rememberSaveable { mutableStateOf(false) }
     val shownEpisodes = if (downloadedOnly) episodes.filter { it.isDownloaded } else episodes
     val allPodcasts by repository.podcasts.collectAsState(initial = emptyList())
     val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
@@ -100,6 +101,8 @@ fun PodcastScreen(
     var fixFeedOpen by remember { mutableStateOf(false) }
     var olderThanOpen by remember { mutableStateOf(false) }
     var settingsDialogOpen by remember { mutableStateOf(false) }
+    var confirmMarkAllPlayed by remember { mutableStateOf(false) }
+    var confirmUnsubscribe by remember { mutableStateOf(false) }
 
     // multi-select for bulk download / queue
     val selectedEpisodes = remember { mutableStateListOf<Long>() }
@@ -240,17 +243,14 @@ fun PodcastScreen(
                             text = { Text(stringResource(R.string.mark_all_played)) },
                             onClick = {
                                 menuOpen = false
-                                scope.launch { repository.markAllPlayed(podcastId) }
+                                confirmMarkAllPlayed = true
                             }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.unsubscribe)) },
                             onClick = {
                                 menuOpen = false
-                                scope.launch {
-                                    repository.unsubscribe(podcastId)
-                                    onUnsubscribed()
-                                }
+                                confirmUnsubscribe = true
                             }
                         )
                         }
@@ -269,7 +269,7 @@ fun PodcastScreen(
                         Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.cancel_selection))
                     }
                     Text(
-                        "${selectedEpisodes.size} selected",
+                        stringResource(R.string.n_selected, selectedEpisodes.size),
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f)
                     )
@@ -312,8 +312,29 @@ fun PodcastScreen(
             }
 
             LazyColumn(Modifier.fillMaxSize()) {
-                if (episodes.size >= episodeLimit) {
-                    // there may be more beyond the page
+                if (shownEpisodes.isEmpty()) {
+                    item(key = "empty") {
+                        Box(
+                            Modifier.fillMaxWidth().padding(top = 48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            com.stepcast.app.ui.theme.EmptyState(
+                                icon = if (downloadedOnly) {
+                                    Icons.Rounded.Download
+                                } else {
+                                    Icons.Rounded.Refresh
+                                },
+                                title = stringResource(
+                                    if (downloadedOnly) {
+                                        R.string.no_downloaded_episodes
+                                    } else {
+                                        R.string.no_episodes_yet
+                                    }
+                                ),
+                                hint = ""
+                            )
+                        }
+                    }
                 }
                 items(shownEpisodes, key = { it.id }) { episode ->
                     EpisodeRow(
@@ -363,8 +384,8 @@ fun PodcastScreen(
                         }
                     )
                 }
-                val moreExist = episodes.size >= episodeLimit &&
-                    (counts?.total ?: Int.MAX_VALUE) > episodes.size
+                val moreExist = shownEpisodes.size >= episodeLimit &&
+                    (counts?.total ?: Int.MAX_VALUE) > shownEpisodes.size
                 if (moreExist) {
                     item(key = "load-more") {
                         TextButton(
@@ -375,10 +396,10 @@ fun PodcastScreen(
                         ) {
                             val total = counts?.total
                             Text(
-                                if (total != null && total > episodes.size) {
-                                    "Show more episodes (${episodes.size} of $total)"
+                                if (total != null && total > shownEpisodes.size) {
+                                    "Show more episodes (${shownEpisodes.size} of $total)"
                                 } else {
-                                    "Show more episodes (${episodes.size} loaded)"
+                                    "Show more episodes (${shownEpisodes.size} loaded)"
                                 }
                             )
                         }
@@ -480,6 +501,53 @@ fun PodcastScreen(
             }
         )
     }
+
+    if (confirmMarkAllPlayed) {
+        AlertDialog(
+            onDismissRequest = { confirmMarkAllPlayed = false },
+            title = { Text(stringResource(R.string.mark_all_played_confirm_title)) },
+            text = { Text(stringResource(R.string.mark_all_played_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmMarkAllPlayed = false
+                    scope.launch { repository.markAllPlayed(podcastId) }
+                }) { Text(stringResource(R.string.mark_all_played)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmMarkAllPlayed = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (confirmUnsubscribe) {
+        AlertDialog(
+            onDismissRequest = { confirmUnsubscribe = false },
+            title = {
+                Text(
+                    stringResource(
+                        R.string.unsubscribe_confirm_title, podcast?.title.orEmpty()
+                    )
+                )
+            },
+            text = { Text(stringResource(R.string.unsubscribe_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmUnsubscribe = false
+                    scope.launch {
+                        repository.unsubscribe(podcastId)
+                        onUnsubscribed()
+                    }
+                }) { Text(stringResource(R.string.unsubscribe)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUnsubscribe = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
 }
 
 /** Everything the settings dialog can change, in one bundle. */
@@ -576,7 +644,8 @@ private fun PodcastSettingsDialog(
                 OutlinedTextField(
                     value = speedText,
                     onValueChange = { text ->
-                        speedText = text.filter { it.isDigit() || it == '.' }.take(4)
+                        val filtered = text.filter { it.isDigit() || it == '.' }.take(4)
+                        if (filtered.count { it == '.' } <= 1) speedText = filtered
                     },
                     label = { Text(stringResource(R.string.speed_empty_default)) },
                     singleLine = true,
@@ -675,7 +744,13 @@ private fun PodcastSettingsDialog(
                         introSec = intro.toIntOrNull() ?: 0,
                         outroSec = outro.toIntOrNull() ?: 0,
                         adJumpSec = adJump.toIntOrNull() ?: 0,
-                        speed = speedText.toFloatOrNull() ?: 0f,
+                        // blank = default; unparseable input keeps the old
+                        // value instead of silently resetting the speed
+                        speed = if (speedText.isBlank()) {
+                            0f
+                        } else {
+                            speedText.toFloatOrNull()?.coerceIn(0.5f, 3f) ?: speed
+                        },
                         categories = (
                             selectedCategories +
                                 listOfNotNull(

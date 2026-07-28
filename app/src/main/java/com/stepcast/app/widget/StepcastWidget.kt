@@ -34,7 +34,6 @@ import androidx.glance.appwidget.components.SquareIconButton
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.state.updateAppWidgetState
-import androidx.glance.appwidget.updateAll
 import androidx.glance.background
 import androidx.glance.color.ColorProvider
 import androidx.glance.currentState
@@ -73,18 +72,51 @@ import kotlinx.coroutines.guava.await
 
 class StepcastWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StepcastWidget()
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        removeWidgetOpacityPrefs(context, appWidgetIds)
+    }
 }
 
 class StepcastBarWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StepcastBarWidget()
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        removeWidgetOpacityPrefs(context, appWidgetIds)
+    }
 }
 
 class StepcastMiniWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StepcastMiniWidget()
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        removeWidgetOpacityPrefs(context, appWidgetIds)
+    }
 }
 
 class StepcastPlayWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StepcastPlayWidget()
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        removeWidgetOpacityPrefs(context, appWidgetIds)
+    }
+}
+
+/**
+ * Drops a deleted widget's per-widget opacity choice. Android RECYCLES
+ * appWidgetIds, so without this a freshly placed widget could silently
+ * inherit a long-gone widget's setting — worst case "fully transparent".
+ */
+internal fun removeWidgetOpacityPrefs(context: Context, appWidgetIds: IntArray) {
+    val editor = context
+        .getSharedPreferences(StepcastWidget.PREFS, Context.MODE_PRIVATE)
+        .edit()
+    for (id in appWidgetIds) editor.remove("opacity_$id")
+    editor.apply()
 }
 
 // Glance keeps a widget's composition session alive between updates:
@@ -121,7 +153,25 @@ suspend fun updateAllStepcastWidgets(context: Context) {
             }
         }
     }
-    StepcastSmartPlaysWidget().updateAll(context)
+    // the SmartPlays widget reads its list from Glance state for the same
+    // reason (see the session-lifetime note above) — seed every placed
+    // instance with the current names before poking it
+    val smartPlayNames = runCatching {
+        (context.applicationContext as com.stepcast.app.StepcastApplication)
+            .repository.smartPlayList().map { it.name }
+    }.getOrNull()
+    val smartPlaysWidget = StepcastSmartPlaysWidget()
+    for (id in manager.getGlanceIds(StepcastSmartPlaysWidget::class.java)) {
+        runCatching {
+            if (smartPlayNames != null) {
+                updateAppWidgetState(context, id) { prefs ->
+                    prefs[StepcastSmartPlaysWidget.P_SMARTPLAY_NAMES] =
+                        smartPlayNames.joinToString("\n")
+                }
+            }
+            smartPlaysWidget.update(context, id)
+        }
+    }
 }
 
 internal data class WidgetState(
@@ -346,13 +396,17 @@ class StepcastWidget : GlanceAppWidget() {
                     opacity,
                     actionRunCallback<SeekForwardAction>()
                 )
-                Spacer(GlanceModifier.width(10.dp))
-                TransportButton(
-                    R.drawable.ic_notif_done,
-                    "Done: mark played, delete, next",
-                    opacity,
-                    actionRunCallback<DoneDeleteAction>()
-                )
+                // same setting that gates the notification's Done button —
+                // read inside the composition so a toggle can take effect
+                if (AppSettings.notificationDoneButton) {
+                    Spacer(GlanceModifier.width(10.dp))
+                    TransportButton(
+                        R.drawable.ic_notif_done,
+                        "Done: mark played, delete, next",
+                        opacity,
+                        actionRunCallback<DoneDeleteAction>()
+                    )
+                }
             }
         }
     }

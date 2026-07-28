@@ -25,6 +25,14 @@ Send an **explicit broadcast** to the command receiver:
 | `…command.REFRESH_CATEGORY` | Refresh one category's feeds now | `category` (string): the category name, case-insensitive. `name` also accepted. |
 | `…command.START_SMART_PLAY` | Fill the queue from a SmartPlay's rules and start playing. If the SmartPlay is marked as a Station, it becomes the active station and keeps refilling the queue. | `smartplay` (string): the SmartPlay's name, case-insensitive. `name` also accepted. |
 
+`PLAY` and `TOGGLE` start playback by dispatching a system media key
+(`KEYCODE_MEDIA_PLAY`) rather than commanding the service directly — that
+pipeline carries the foreground-service exemption, so playback genuinely
+starts from a background broadcast on Android 12+ (and revives the last
+session via playback resumption after process death). `START_SMART_PLAY`
+returns an error for a SmartPlay name that doesn't match anything: the
+queue and playback are left untouched.
+
 ### adb examples
 
 ```sh
@@ -75,5 +83,8 @@ Not intents you send, but automation-adjacent:
   these route `com.stepcast.app.shortcut.SMARTPLAY` through the invisible
   PlaybackTrampolineActivity — an implementation detail, not a stable
   external API; automate via the broadcast above instead.)
-- **Player / bar / mini / play-button widgets** — transport controls
-  backed by the same command handling as the media notification.
+- **Player / bar / mini / play-button widgets** — transport controls.
+  Play taps ride the same system media-key pipeline as `PLAY`/`TOGGLE`
+  above (not the notification's broadcast path); the other transport
+  buttons drive a bound media controller, and SmartPlay taps go through
+  the invisible PlaybackTrampolineActivity.

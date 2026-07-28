@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Search
@@ -33,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,9 +93,9 @@ fun SearchScreen(
     onPodcastClick: (Long) -> Unit,
     initialQuery: String = ""
 ) {
-    var query by remember(initialQuery) { mutableStateOf(initialQuery) }
+    var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
     // a shared-in URL is a Discover concern; plain entry starts at Library
-    var tab by remember(initialQuery) {
+    var tab by rememberSaveable(initialQuery) {
         mutableStateOf(if (initialQuery.isBlank()) TAB_LIBRARY else TAB_DISCOVER)
     }
     var results by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
@@ -101,6 +105,7 @@ fun SearchScreen(
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     val focusRequester = remember { FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
     var libShows by remember { mutableStateOf<List<Podcast>>(emptyList()) }
     var libEpisodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
@@ -143,10 +148,16 @@ fun SearchScreen(
     // the charts fill the Discover tab until the user actually searches
     var trending by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     var trendingBusy by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
+    var trendingError by remember { mutableStateOf(false) }
+    var trendingRetryNonce by remember { mutableStateOf(0) }
+    LaunchedEffect(trendingRetryNonce) {
         if (trending.isEmpty()) {
             trendingBusy = true
-            trending = runCatching { search.trending() }.getOrDefault(emptyList())
+            trendingError = false
+            trending = runCatching { search.trending() }.getOrElse {
+                trendingError = true
+                emptyList()
+            }
             trendingBusy = false
         }
     }
@@ -201,7 +212,16 @@ fun SearchScreen(
                 keyboardActions = KeyboardActions(onSearch = {
                     // no separate submit semantics: a URL jumps to preview,
                     // anything else just hops to Discover if Library was empty
-                    if (isUrl) onOpenPreview(q)
+                    if (isUrl) {
+                        onOpenPreview(q)
+                    } else {
+                        keyboard?.hide()
+                        if (tab == TAB_LIBRARY && q.length >= 2 &&
+                            libShows.isEmpty() && libEpisodes.isEmpty()
+                        ) {
+                            tab = TAB_DISCOVER
+                        }
+                    }
                 }),
                 trailingIcon = {
                     Icon(
@@ -347,6 +367,9 @@ fun SearchScreen(
                                                     context, snackbar
                                                 )
                                             }
+                                        },
+                                        onGoToPodcast = podcast?.let { p ->
+                                            { onPodcastClick(p.id) }
                                         }
                                     )
                                 }
@@ -389,7 +412,12 @@ fun SearchScreen(
                                     }
                                 }
                             }
-                            items(results, key = { it.feedUrl }) { result ->
+                            // positional-composite keys: the directory returns
+                            // duplicate/blank feed URLs
+                            itemsIndexed(
+                                results,
+                                key = { index, item -> "$index-${item.feedUrl}" }
+                            ) { _, result ->
                                 AppleResultRow(result) { onOpenPreview(result.feedUrl) }
                             }
                         } else {
@@ -417,6 +445,32 @@ fun SearchScreen(
                                         }
                                     }
                                 }
+                            } else if (trending.isEmpty() && trendingError) {
+                                item(key = "trending-error") {
+                                    Box(
+                                        Modifier.fillMaxWidth().padding(top = 40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment =
+                                                Alignment.CenterHorizontally
+                                        ) {
+                                            EmptyState(
+                                                icon = Icons.Rounded.ErrorOutline,
+                                                title = stringResource(
+                                                    R.string.discover_unreachable
+                                                ),
+                                                hint = ""
+                                            )
+                                            TextButton(
+                                                onClick = { trendingRetryNonce++ },
+                                                modifier = Modifier.padding(top = 8.dp)
+                                            ) {
+                                                Text(stringResource(R.string.retry))
+                                            }
+                                        }
+                                    }
+                                }
                             } else if (trending.isEmpty()) {
                                 item(key = "discover-empty") {
                                     Box(
@@ -440,7 +494,10 @@ fun SearchScreen(
                                         stringResource(R.string.top_podcasts_right_now)
                                     )
                                 }
-                                items(trending, key = { it.feedUrl }) { result ->
+                                itemsIndexed(
+                                    trending,
+                                    key = { index, item -> "$index-${item.feedUrl}" }
+                                ) { _, result ->
                                     AppleResultRow(result) {
                                         onOpenPreview(result.feedUrl)
                                     }

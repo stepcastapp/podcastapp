@@ -54,8 +54,10 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var playerConnection: PlayerConnection
 
-    // feed URL arriving via share sheet or a podcast:// style link
-    private val sharedFeedUrl = androidx.compose.runtime.mutableStateOf<String?>(null)
+    // feed URL arriving via share sheet or a podcast:// style link; the
+    // nonce bumps on EVERY share so re-sharing the same URL still fires
+    private var sharedFeedUrl: String? = null
+    private val shareNonce = androidx.compose.runtime.mutableStateOf(0)
 
     private fun extractFeedUrl(intent: android.content.Intent?): String? {
         intent ?: return null
@@ -86,7 +88,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        extractFeedUrl(intent)?.let { sharedFeedUrl.value = it }
+        extractFeedUrl(intent)?.let {
+            sharedFeedUrl = it
+            shareNonce.value++
+        }
         handleSmartPlayShortcut(intent)
     }
 
@@ -101,7 +106,10 @@ class MainActivity : ComponentActivity() {
         // shortcut (or re-open a shared feed) the user triggered long ago,
         // starting playback out of nowhere. Fresh taps arrive via onNewIntent.
         if (savedInstanceState == null) {
-            extractFeedUrl(intent)?.let { sharedFeedUrl.value = it }
+            extractFeedUrl(intent)?.let {
+                sharedFeedUrl = it
+                shareNonce.value++
+            }
             handleSmartPlayShortcut(intent)
         }
         com.stepcast.app.ui.theme.ThemePrefs.init(this)
@@ -137,7 +145,7 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             StepcastTheme {
-                StepcastApp(playerConnection, sharedFeedUrl.value)
+                StepcastApp(playerConnection, sharedFeedUrl, shareNonce.value)
             }
         }
     }
@@ -149,19 +157,41 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
+fun StepcastApp(
+    player: PlayerConnection,
+    sharedFeedUrl: String? = null,
+    shareNonce: Int = 0
+) {
     val navController = rememberNavController()
     val app = LocalContext.current.applicationContext as StepcastApplication
     val playerState by player.state.collectAsState()
     val queue by app.repository.queue.collectAsState(initial = emptyList())
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    var playerExpanded by remember { mutableStateOf(false) }
+    var playerExpanded by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(false)
+    }
+    // nothing playing? an expanded player over a blank state makes no sense
+    androidx.compose.runtime.LaunchedEffect(playerState.episodeId) {
+        if (playerState.episodeId == null) playerExpanded = false
+    }
 
-    // a shared/linked feed URL lands in Discover, prefilled
-    androidx.compose.runtime.LaunchedEffect(sharedFeedUrl) {
+    // a shared/linked feed URL lands in Discover, prefilled; keyed on the
+    // nonce so re-sharing the same URL navigates again
+    var pendingSearchQuery by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.LaunchedEffect(shareNonce) {
         if (!sharedFeedUrl.isNullOrBlank()) {
+            pendingSearchQuery = sharedFeedUrl
             navController.navigate("search") { launchSingleTop = true }
+        }
+    }
+    // the prefill is consumed once the user LEAVES search — reopening it
+    // later must not resurrect a stale shared URL
+    androidx.compose.runtime.LaunchedEffect(currentRoute) {
+        if (currentRoute != null && currentRoute != "search" &&
+            pendingSearchQuery != null
+        ) {
+            pendingSearchQuery = null
         }
     }
 
@@ -266,9 +296,13 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
             composable("home") {
                 HomeScreen(
                     repository = app.repository,
-                    onPodcastClick = { navController.navigate("podcast/$it") },
+                    onPodcastClick = {
+                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                    },
                     onCategoryClick = { name ->
-                        navController.navigate("category/${android.net.Uri.encode(name)}")
+                        navController.navigate(
+                            "category/${android.net.Uri.encode(name)}"
+                        ) { launchSingleTop = true }
                     },
                     onOpenSettings = {
                         navController.navigate("settings") { launchSingleTop = true }
@@ -306,12 +340,14 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                     repository = app.repository,
                     player = player,
                     playerState = playerState,
-                    onPodcastClick = { navController.navigate("podcast/$it") },
+                    onPodcastClick = {
+                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                    },
                     onRenamed = { newName ->
                         navController.popBackStack()
                         navController.navigate(
                             "category/${android.net.Uri.encode(newName)}"
-                        )
+                        ) { launchSingleTop = true }
                     },
                     onDeleted = { navController.popBackStack() }
                 )
@@ -327,7 +363,9 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                     onOpenHistory = {
                         navController.navigate("history") { launchSingleTop = true }
                     },
-                    onPodcastClick = { navController.navigate("podcast/$it") }
+                    onPodcastClick = {
+                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                    }
                 )
             }
             composable("downloads") {
@@ -341,7 +379,9 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
             composable("schedule") {
                 com.stepcast.app.ui.screens.ScheduleScreen(
                     repository = app.repository,
-                    onOpenPodcast = { navController.navigate("podcast/$it") }
+                    onOpenPodcast = {
+                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                    }
                 )
             }
             composable(
@@ -361,13 +401,15 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                     repository = app.repository,
                     player = player,
                     playerState = playerState,
-                    initialQuery = sharedFeedUrl.orEmpty(),
+                    initialQuery = pendingSearchQuery ?: "",
                     onOpenPreview = { feedUrl ->
                         navController.navigate(
                             "preview/${android.net.Uri.encode(feedUrl)}"
                         ) { launchSingleTop = true }
                     },
-                    onPodcastClick = { navController.navigate("podcast/$it") }
+                    onPodcastClick = {
+                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                    }
                 )
             }
             composable(
@@ -385,7 +427,9 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                             popUpTo("home") { inclusive = true }
                         }
                     },
-                    onOpenPodcast = { navController.navigate("podcast/$it") }
+                    onOpenPodcast = {
+                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                    }
                 )
             }
             composable(
@@ -420,7 +464,9 @@ fun StepcastApp(player: PlayerConnection, sharedFeedUrl: String? = null) {
                 repository = app.repository,
                 onOpenPodcast = { podcastId ->
                     playerExpanded = false
-                    navController.navigate("podcast/$podcastId")
+                    navController.navigate("podcast/$podcastId") {
+                        launchSingleTop = true
+                    }
                 },
                 onDismiss = { playerExpanded = false }
             )

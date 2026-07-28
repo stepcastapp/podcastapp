@@ -83,6 +83,7 @@ fun CategoryScreen(
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var editOpen by remember { mutableStateOf(false) }
+    var removeConfirmOpen by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var downloadedOnly by remember { mutableStateOf(false) }
     val shownEpisodes = if (downloadedOnly) episodes.filter { it.isDownloaded } else episodes
@@ -338,12 +339,33 @@ fun CategoryScreen(
                 Row {
                     TextButton(onClick = {
                         editOpen = false
-                        scope.launch {
-                            repository.deleteCategory(category)
-                            onDeleted()
-                        }
+                        removeConfirmOpen = true
                     }) { Text(stringResource(R.string.remove_category)) }
                     TextButton(onClick = { editOpen = false }) { Text(stringResource(R.string.cancel)) }
+                }
+            }
+        )
+    }
+
+    if (removeConfirmOpen) {
+        AlertDialog(
+            onDismissRequest = { removeConfirmOpen = false },
+            title = {
+                Text(stringResource(R.string.remove_category_confirm_title, category))
+            },
+            text = { Text(stringResource(R.string.remove_category_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    removeConfirmOpen = false
+                    scope.launch {
+                        repository.deleteCategory(category)
+                        onDeleted()
+                    }
+                }) { Text(stringResource(R.string.confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeConfirmOpen = false }) {
+                    Text(stringResource(R.string.cancel))
                 }
             }
         )

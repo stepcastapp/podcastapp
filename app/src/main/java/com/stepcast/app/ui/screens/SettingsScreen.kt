@@ -1,6 +1,5 @@
 package com.stepcast.app.ui.screens
 
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -36,6 +35,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -50,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -88,6 +90,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
     var reorderDialogOpen by remember { mutableStateOf(false) }
     var diagnosticsOpen by remember { mutableStateOf(false) }
@@ -95,6 +98,21 @@ fun SettingsScreen(
     var bpResult by remember { mutableStateOf<String?>(null) }
     var backupResult by remember { mutableStateOf<String?>(null) }
     var storageOpen by remember { mutableStateOf(false) }
+
+    // result texts surface as a snackbar too, then clear once it's gone —
+    // an inline banner pinned forever reads as a stuck state
+    androidx.compose.runtime.LaunchedEffect(backupResult) {
+        backupResult?.let {
+            snackbar.showSnackbar(it)
+            backupResult = null
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(bpResult) {
+        bpResult?.let {
+            snackbar.showSnackbar(it)
+            bpResult = null
+        }
+    }
 
     // which settings sections are folded shut (session-only; all start open)
     val collapsedSections = remember {
@@ -150,11 +168,9 @@ fun SettingsScreen(
                 }.getOrNull().orEmpty()
             }
             val count = repository.subscribeAll(urls)
-            Toast.makeText(
-                context,
-                context.getString(R.string.imported_n_of_m_feeds, count, urls.size),
-                Toast.LENGTH_LONG
-            ).show()
+            snackbar.showSnackbar(
+                context.getString(R.string.imported_n_of_m_feeds, count, urls.size)
+            )
         }
     }
 
@@ -175,13 +191,11 @@ fun SettingsScreen(
                     }
                 }.isSuccess
             }
-            Toast.makeText(
-                context,
+            snackbar.showSnackbar(
                 context.getString(
                     if (ok) R.string.subscriptions_exported else R.string.export_failed
-                ),
-                Toast.LENGTH_LONG
-            ).show()
+                )
+            )
         }
     }
 
@@ -220,6 +234,7 @@ fun SettingsScreen(
         }
     }
 
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -724,6 +739,21 @@ fun SettingsScreen(
                     }
                 }
             )
+            if (com.stepcast.app.data.AppSettings.lastAutoBackupMs > 0) {
+                Text(
+                    stringResource(
+                        R.string.last_backup_at,
+                        java.text.DateFormat.getDateTimeInstance().format(
+                            java.util.Date(
+                                com.stepcast.app.data.AppSettings.lastAutoBackupMs
+                            )
+                        )
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
         backupResult?.let {
             Text(
@@ -855,8 +885,13 @@ fun SettingsScreen(
         SectionDivider()
 
         // ---- Troubleshooting -----------------------------------------------
-        val crashFile = java.io.File(context.filesDir, "last_crash.txt")
-        if (crashFile.exists()) {
+        val crashFile = remember { java.io.File(context.filesDir, "last_crash.txt") }
+        // the existence check hits disk — keep it off the composition path
+        var crashFilePresent by remember { mutableStateOf(false) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            crashFilePresent = withContext(Dispatchers.IO) { crashFile.exists() }
+        }
+        if (crashFilePresent) {
             SectionHeader(stringResource(R.string.troubleshooting), sectionOpen("Troubleshooting")) {
                 toggleSection("Troubleshooting")
             }
@@ -905,6 +940,12 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+
+    SnackbarHost(
+        hostState = snackbar,
+        modifier = Modifier.align(Alignment.BottomCenter)
+    )
     }
 
     if (diagnosticsOpen) {
@@ -1239,7 +1280,9 @@ private fun SectionDivider() {
 
 /**
  * A numeric preference row: label + hint on the left, a small text field on
- * the right that commits on every valid change (the setter clamps ranges).
+ * the right. Typing edits a LOCAL buffer only; the value commits on focus
+ * loss or the Done key (the setter clamps ranges), and the field then snaps
+ * to the clamped stored value so "999" reads back as the real ceiling.
  */
 @Composable
 private fun NumberSetting(
@@ -1249,9 +1292,14 @@ private fun NumberSetting(
     hint: String,
     onCommit: (Int) -> Unit
 ) {
-    // deliberately not keyed on [value]: the clamped setter may echo back a
-    // different number mid-typing, which would yank the cursor around
     var text by remember { mutableStateOf(value.toString()) }
+    var focused by remember { mutableStateOf(false) }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    // while unfocused, mirror the (clamped) stored value — the commit below
+    // recomposes with the echoed number and this snaps the text to it
+    androidx.compose.runtime.LaunchedEffect(value, focused) {
+        if (!focused) text = value.toString()
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1271,12 +1319,25 @@ private fun NumberSetting(
             value = text,
             onValueChange = { input ->
                 text = input.filter(Char::isDigit).take(3)
-                text.toIntOrNull()?.let(onCommit)
             },
             suffix = { Text(unit, style = MaterialTheme.typography.bodySmall) },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.width(130.dp)
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = androidx.compose.ui.text.input.ImeAction.Done
+            ),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                // clearing focus routes Done through the focus-loss commit
+                onDone = { focusManager.clearFocus() }
+            ),
+            modifier = Modifier
+                .width(130.dp)
+                .onFocusChanged { state ->
+                    if (focused && !state.isFocused) {
+                        text.toIntOrNull()?.let(onCommit)
+                    }
+                    focused = state.isFocused
+                }
         )
     }
 }

@@ -74,11 +74,17 @@ fun PodcastPreviewScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var existingId by remember { mutableStateOf<Long?>(null) }
     var busy by remember { mutableStateOf(false) }
+    // subscribe failures stay inline next to the button — they must not
+    // replace the whole loaded preview with the load-failure state
+    var subscribeError by remember { mutableStateOf<String?>(null) }
+    var subscribed by remember { mutableStateOf(false) }
+    var retryNonce by remember { mutableStateOf(0) }
     var categoryPromptFor by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
     val subscribeFailedMsg = stringResource(R.string.subscribe_failed)
 
-    LaunchedEffect(feedUrl) {
+    LaunchedEffect(feedUrl, retryNonce) {
+        error = null
         existingId = repository.podcastIdForFeed(feedUrl)
         runCatching { repository.previewFeed(feedUrl) }
             .onSuccess {
@@ -94,11 +100,19 @@ fun PodcastPreviewScreen(
     val loaded = feed
     when {
         error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            EmptyState(
-                icon = Icons.Rounded.ErrorOutline,
-                title = stringResource(R.string.couldnt_load_feed),
-                hint = error.orEmpty()
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                EmptyState(
+                    icon = Icons.Rounded.ErrorOutline,
+                    title = stringResource(R.string.couldnt_load_feed),
+                    hint = error.orEmpty()
+                )
+                TextButton(
+                    onClick = { retryNonce++ },
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    Text(stringResource(R.string.retry))
+                }
+            }
         }
         loaded == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
@@ -154,16 +168,19 @@ fun PodcastPreviewScreen(
                             }
                         } else {
                             Button(
-                                enabled = !busy,
+                                enabled = !busy && !subscribed,
                                 onClick = {
                                     scope.launch {
                                         busy = true
+                                        subscribeError = null
                                         runCatching {
                                             repository.subscribe(feedUrl, loaded)
                                         }.onSuccess {
+                                            subscribed = true
                                             categoryPromptFor = it
                                         }.onFailure {
-                                            error = it.message ?: subscribeFailedMsg
+                                            subscribeError =
+                                                it.message ?: subscribeFailedMsg
                                         }
                                         busy = false
                                     }
@@ -177,6 +194,14 @@ fun PodcastPreviewScreen(
                                             R.string.subscribe
                                         }
                                     )
+                                )
+                            }
+                            subscribeError?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp)
                                 )
                             }
                         }
@@ -296,10 +321,10 @@ fun PodcastPreviewScreen(
         var picked by remember { mutableStateOf("") }
         var newCategory by remember { mutableStateOf("") }
         AlertDialog(
-            onDismissRequest = {
-                categoryPromptFor = null
-                onSubscribed(newPodcastId)
-            },
+            // dismissing (tap outside / back) only closes the prompt — the
+            // subscription already happened, and clearing the back stack on
+            // an accidental outside tap threw the user out of the preview
+            onDismissRequest = { categoryPromptFor = null },
             title = { Text(stringResource(R.string.subscribed_add_to_a_category)) },
             text = {
                 Column {

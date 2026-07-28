@@ -204,6 +204,16 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   position save, played mark, row rekey/prune, and timeline swap, with
   its source), so "my episode started over" reports carry evidence.
 - **Crash capture** with a share-report row in Settings.
+- **Episode metadata stays fresh**: refresh adopts corrected titles,
+  show notes, artwork, durations, and late-added chapters for episodes
+  you already have (playback state is never touched).
+- **Backup v2**: per-show schedule rules, ad-jump, SmartPlay station
+  mode and order, and the checkpoint/quiet-hours settings all
+  round-trip; restoring never overwrites settings of shows you already
+  have (categories merge additively), and old backups no longer reset
+  settings they predate. OPML round-trips categories. Auto-backup keeps
+  the previous generation, backs up immediately when enabled, and shows
+  when it last succeeded.
 - **Episode identity survives feed churn**: when a feed changes an
   episode's guid or enclosure URL (rotating tracking prefixes,
   ad-insertion tokens, CMS migrations), the existing row is rekeyed to

@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -101,6 +104,8 @@ fun FixFeedDialog(
                     onValueChange = { query = it },
                     singleLine = true,
                     enabled = !busy,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { runSearch() }),
                     trailingIcon = {
                         IconButton(onClick = ::runSearch, enabled = !busy) {
                             Icon(
@@ -123,7 +128,12 @@ fun FixFeedDialog(
                     CircularProgressIndicator(Modifier.padding(16.dp))
                 }
                 LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                    items(results, key = { it.feedUrl }) { result ->
+                    // positional-composite keys: the directory returns
+                    // duplicate/blank feed URLs
+                    itemsIndexed(
+                        results,
+                        key = { index, item -> "$index-${item.feedUrl}" }
+                    ) { _, result ->
                         val isCurrent =
                             normalized(result.feedUrl) == normalized(podcast.feedUrl)
                         Row(
@@ -202,7 +212,8 @@ fun FixFeedDialog(
                 }
             }
         },
-        confirmButton = {
+        confirmButton = {},
+        dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )

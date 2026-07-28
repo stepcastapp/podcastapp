@@ -66,10 +66,9 @@ import com.stepcast.app.data.AppSettings
 import com.stepcast.app.data.Episode
 import com.stepcast.app.data.PodcastRepository
 import com.stepcast.app.download.DownloadWorker
+import com.stepcast.app.ui.Formatters
 import com.stepcast.app.ui.PlayerConnection
 import com.stepcast.app.ui.progressBorder
-import java.text.DateFormat
-import java.util.Date
 
 /**
  * Live progress for the one row that is playing. Call it only for the
@@ -188,7 +187,9 @@ fun EpisodeRow(
     onDeleteDownload: () -> Unit,
     onSwipeAction: (String) -> Unit,
     /** Inbox rows only: adds a "Remove from New" menu entry. */
-    onRemoveFromInbox: (() -> Unit)? = null
+    onRemoveFromInbox: (() -> Unit)? = null,
+    /** Cross-show lists only: adds a "Go to <podcast>" menu entry. */
+    onGoToPodcast: (() -> Unit)? = null
 ) {
     val view = androidx.compose.ui.platform.LocalView.current
     // the swipe state keeps the FIRST confirmValueChange it's given; route
@@ -276,7 +277,8 @@ fun EpisodeRow(
                 onDownload = onDownload,
                 onCancelDownload = onCancelDownload,
                 onDeleteDownload = onDeleteDownload,
-                onRemoveFromInbox = onRemoveFromInbox
+                onRemoveFromInbox = onRemoveFromInbox,
+                onGoToPodcast = onGoToPodcast
             )
         }
     }
@@ -301,7 +303,8 @@ private fun EpisodeRowContent(
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onDeleteDownload: () -> Unit,
-    onRemoveFromInbox: (() -> Unit)? = null
+    onRemoveFromInbox: (() -> Unit)? = null,
+    onGoToPodcast: (() -> Unit)? = null
 ) {
     var rowMenuOpen by remember { mutableStateOf(false) }
     var detailsOpen by remember { mutableStateOf(false) }
@@ -354,14 +357,6 @@ private fun EpisodeRowContent(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            val date = if (episode.pubDateMs > 0)
-                DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(episode.pubDateMs))
-            else ""
-            val duration = if (episode.durationMs > 0) {
-                stringResource(R.string.duration_minutes, episode.durationMs / 60000)
-            } else {
-                ""
-            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 2.dp)
@@ -404,7 +399,10 @@ private fun EpisodeRowContent(
                     }
                 }
                 Text(
-                    listOf(podcastTitle.orEmpty(), date, duration)
+                    listOf(
+                        podcastTitle.orEmpty(),
+                        Formatters.episodeMeta(episode.pubDateMs, episode.durationMs)
+                    )
                         .filter { it.isNotEmpty() }
                         .joinToString(" • "),
                     style = MaterialTheme.typography.bodySmall,
@@ -450,6 +448,18 @@ private fun EpisodeRowContent(
                     text = { Text(stringResource(R.string.episode_details)) },
                     onClick = { rowMenuOpen = false; detailsOpen = true }
                 )
+                if (onGoToPodcast != null) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(
+                                    R.string.go_to_podcast, podcastTitle.orEmpty()
+                                )
+                            )
+                        },
+                        onClick = { rowMenuOpen = false; onGoToPodcast() }
+                    )
+                }
                 if (onRemoveFromInbox != null) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.remove_from_new)) },
@@ -457,7 +467,17 @@ private fun EpisodeRowContent(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.play_next)) },
+                    text = {
+                        Text(
+                            stringResource(
+                                if (inQueue) {
+                                    R.string.remove_from_up_next
+                                } else {
+                                    R.string.play_next
+                                }
+                            )
+                        )
+                    },
                     onClick = { rowMenuOpen = false; onPlayNext() }
                 )
                 DropdownMenuItem(
@@ -567,23 +587,10 @@ fun EpisodeDetailsDialog(
         title = { Text(episode.title) },
         text = {
             Column {
-                val date = if (episode.pubDateMs > 0) {
-                    DateFormat.getDateInstance(DateFormat.MEDIUM)
-                        .format(Date(episode.pubDateMs))
-                } else {
-                    ""
-                }
-                val duration = if (episode.durationMs > 0) {
-                    stringResource(
-                        R.string.duration_minutes, episode.durationMs / 60000
-                    )
-                } else {
-                    ""
-                }
-                val meta = listOf(date, duration).filter { it.isNotEmpty() }
+                val meta = Formatters.episodeMeta(episode.pubDateMs, episode.durationMs)
                 if (meta.isNotEmpty()) {
                     Text(
-                        meta.joinToString(" • "),
+                        meta,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp)
