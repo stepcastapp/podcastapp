@@ -27,29 +27,29 @@ references are as of commit `ab06455` and drift as fixes land.
 
 ## Wave 2 — playback races
 
-- [ ] Outro-skip acts on stale duration/position across a suspension, can
+- [x] Outro-skip acts on stale duration/position across a suspension, can
       seek the NEXT episode to the previous one's end; no once-per-episode
       guard (scrubbing back re-yanks); DB query every tick.
-- [ ] Ad-chapter skip can run against the previous episode's chapters
+- [x] Ad-chapter skip can run against the previous episode's chapters
       during the async episode-start window.
-- [ ] `maybeContinueCurrentShow` and `onPlaybackResumption` bypass
+- [x] `maybeContinueCurrentShow` and `onPlaybackResumption` bypass
       `resumeStartMs()`; resumption can return a played episode.
-- [ ] Station refill: DB rows written one-by-one before the timeline
+- [x] Station refill: DB rows written one-by-one before the timeline
       append; UI queueSync interleaves → duplicated episodes.
-- [ ] queueSync snapshots the current index before suspending Room reads;
+- [x] queueSync snapshots the current index before suspending Room reads;
       can remove the currently playing item / mis-tail.
-- [ ] `sleepAtEpisodeEnd` never cleared when the sleeping episode is last
+- [x] `sleepAtEpisodeEnd` never cleared when the sleeping episode is last
       → a future queue silently pauses at first auto-advance.
-- [ ] `serviceScope` never cancelled; onDestroy persist is async (lossy);
+- [x] `serviceScope` never cancelled; onDestroy persist is async (lossy);
       onTaskRemoved skips super and persists nothing.
-- [ ] Streaming-off enforced only on the tapped head episode; queue tails,
+- [x] Streaming-off enforced only on the tapped head episode; queue tails,
       SmartPlay starts, station refill, auto-continue, Auto, resumption
       all stream on metered. One `playableUri()` policy.
-- [ ] Widget play glyph sticks wrong when a play never starts; no
+- [x] Widget play glyph sticks wrong when a play never starts; no
       reconciliation; service death leaves pause glyph.
-- [ ] CommandReceiver: unbounded controller build inside a ~10s goAsync
+- [x] CommandReceiver: unbounded controller build inside a ~10s goAsync
       budget.
-- [ ] cacheWidgetArt: unbounded URL read, no timeout, torn-file window,
+- [x] cacheWidgetArt: unbounded URL read, no timeout, torn-file window,
       PNG+quality mismatch.
 
 ## Wave 3 — metadata, backup, feeds

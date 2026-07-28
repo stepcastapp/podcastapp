@@ -38,6 +38,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.isActive
@@ -72,6 +73,14 @@ class PlaybackService : MediaLibraryService() {
     private var lastShakeMs = 0L
     private var currentChapters: List<Chapter> = emptyList()
     private var lastAdSkipStartMs = -1L
+
+    // Per-episode skip state is stamped with the episode it was loaded for:
+    // the 1s ticker keeps running through the async onEpisodeStarted window,
+    // and must never evaluate the PREVIOUS episode's chapters/outro against
+    // the NEW episode's position (that seeked fresh episodes to bogus spots).
+    private var currentSkipEpisodeId: Long? = null
+    private var currentOutroMs = 0L
+    private var outroSkippedForEpisodeId: Long? = null
 
     /** The current show's manual ad-jump length; drives the extra
      * notification button and the AD_JUMP command. 0 = none. */
@@ -108,6 +117,11 @@ class PlaybackService : MediaLibraryService() {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 publishWidgetState()
                 mediaItem ?: return
+                // invalidate skip state SYNCHRONOUSLY — onEpisodeStarted
+                // reloads it asynchronously and the ticker runs meanwhile
+                currentSkipEpisodeId = null
+                currentChapters = emptyList()
+                currentOutroMs = 0L
                 serviceScope.launch { onEpisodeStarted(mediaItem, reason) }
             }
 
@@ -121,12 +135,18 @@ class PlaybackService : MediaLibraryService() {
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
+                    // when the sleeping episode is the LAST item there is no
+                    // AUTO transition to consume the flag — clear it here or
+                    // a queue started days later silently pauses at its
+                    // first auto-advance
+                    val sleepStop = sleepAtEpisodeEnd
+                    sleepAtEpisodeEnd = false
                     currentEpisodeId()?.let { id ->
                         serviceScope.launch {
                             withContext(Dispatchers.IO) {
                                 app.repository.markPlayed(id, "ended")
                             }
-                            maybeContinueCurrentShow(id)
+                            if (!sleepStop) maybeContinueCurrentShow(id)
                         }
                     }
                 }
@@ -367,21 +387,26 @@ class PlaybackService : MediaLibraryService() {
             serviceScope.future {
                 val prefs = getSharedPreferences(StepcastWidget.PREFS, MODE_PRIVATE)
                 val lastId = prefs.getLong(StepcastWidget.KEY_EPISODE_ID, -1L)
+                // never resume a finished episode, and honor streaming-off:
+                // fall through to the first playable queued episode instead
                 val episode = lastId.takeIf { it > 0 }
                     ?.let { app.repository.episode(it) }
-                    ?: app.repository.queueSnapshot().firstOrNull()
+                    ?.takeIf { !it.played && app.repository.playableUri(it) != null }
+                    ?: app.repository.queueSnapshot()
+                        .firstOrNull { app.repository.playableUri(it) != null }
                     ?: throw UnsupportedOperationException("nothing to resume")
-                val tail = app.repository.queueSnapshot().filter { it.id != episode.id }
+                val tail = app.repository.queueSnapshot().filter {
+                    it.id != episode.id && app.repository.playableUri(it) != null
+                }
                 val items = buildList {
                     add(episodeToItem(episode))
                     tail.forEach { add(episodeToItem(it)) }
                 }
+                val startMs = episode.resumeStartMs()
                 PlaybackJournal.log(
-                    "resume", "ep=${episode.id} pos=${episode.positionMs}"
+                    "resume", "ep=${episode.id} dbPos=${episode.positionMs} start=$startMs"
                 )
-                MediaSession.MediaItemsWithStartPosition(
-                    items, 0, episode.positionMs.coerceAtLeast(0)
-                )
+                MediaSession.MediaItemsWithStartPosition(items, 0, startMs)
             }
 
         override fun onCustomCommand(
@@ -537,14 +562,18 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>
         ): ListenableFuture<List<MediaItem>> =
             serviceScope.future {
-                mediaItems.map { item ->
+                mediaItems.mapNotNull { item ->
                     if (item.localConfiguration != null) {
                         item
                     } else {
-                        item.mediaId.toLongOrNull()
+                        val episode = item.mediaId.toLongOrNull()
                             ?.let { app.repository.episode(it) }
-                            ?.let { episodeToItem(it) }
-                            ?: item
+                        when {
+                            episode == null -> item
+                            // streaming-off applies to Auto/Bluetooth picks too
+                            app.repository.playableUri(episode) == null -> null
+                            else -> episodeToItem(episode)
+                        }
                     }
                 }
             }
@@ -570,13 +599,13 @@ class PlaybackService : MediaLibraryService() {
     /** Playable item with the same mediaId convention (plain episode id). */
     private suspend fun episodeToItem(episode: Episode, podcast: Podcast? = null): MediaItem {
         val owner = podcast ?: app.repository.podcast(episode.podcastId)
-        val localUri = episode.localFilePath
-            ?.let { File(it) }
-            ?.takeIf { it.exists() }
-            ?.let { Uri.fromFile(it).toString() }
+        // playableUri honors streaming-off; callers filter unplayable
+        // episodes out first, so the audioUrl fallback here only serves
+        // paths that deliberately allow streaming (e.g. browse previews)
+        val uri = app.repository.playableUri(episode) ?: episode.audioUrl
         return MediaItem.Builder()
             .setMediaId(episode.id.toString())
-            .setUri(localUri ?: episode.audioUrl)
+            .setUri(uri)
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(episode.title)
@@ -692,6 +721,10 @@ class PlaybackService : MediaLibraryService() {
         mediaSession
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // swipe-away can be followed by a process kill before an async
+        // persist lands — write the position NOW, on this thread
+        persistPositionBlocking("task-removed")
         val player = mediaSession?.player
         if (player == null || !player.playWhenReady) {
             stopSelf()
@@ -699,16 +732,42 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
-        persistPosition("destroy")
+        // synchronous: an async write on serviceScope would be cancelled two
+        // lines down (and the process may die right after onDestroy returns)
+        persistPositionBlocking("destroy")
         stopTicker()
         stopShakeListener()
         sleepJob?.cancel()
+        // widgets must not keep showing a playing glyph for a dead service;
+        // best-effort poke on a throwaway scope (this one is about to die)
+        getSharedPreferences(StepcastWidget.PREFS, MODE_PRIVATE)
+            .edit().putBoolean(StepcastWidget.KEY_PLAYING, false).apply()
+        val appContext = applicationContext
+        CoroutineScope(Dispatchers.Default).launch {
+            runCatching { updateAllStepcastWidgets(appContext) }
+        }
         mediaSession?.run {
             player.release()
             release()
             mediaSession = null
         }
+        // everything still in flight on the scope dereferences the released
+        // player otherwise — futures, artwork fetches, stats flushes
+        serviceScope.cancel()
         super.onDestroy()
+    }
+
+    /** Synchronous position write for teardown paths (see onDestroy). */
+    private fun persistPositionBlocking(source: String) {
+        val player = mediaSession?.player ?: return
+        val episodeId = currentEpisodeId() ?: return
+        val position = player.currentPosition
+        val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0
+        kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            runCatching {
+                app.repository.savePosition(episodeId, position, duration, source)
+            }
+        }
     }
 
     // ---- position + skip machinery -------------------------------------
@@ -758,9 +817,22 @@ class PlaybackService : MediaLibraryService() {
                 val input = if (uri.startsWith("content:") || uri.startsWith("file:")) {
                     contentResolver.openInputStream(Uri.parse(uri))
                 } else {
-                    java.net.URL(uri).openStream()
+                    // bounded fetch: a slow art host must not pin this
+                    // coroutine forever, and a huge image must not be
+                    // buffered whole into memory
+                    (java.net.URL(uri).openConnection() as java.net.HttpURLConnection)
+                        .apply {
+                            connectTimeout = 10_000
+                            readTimeout = 15_000
+                        }
+                        .inputStream
                 } ?: return@runCatching false
-                val raw = input.use { it.readBytes() }
+                val raw = input.use { stream ->
+                    val cap = 8 * 1024 * 1024
+                    val bytes = stream.readBytes()
+                    if (bytes.size > cap) return@runCatching false
+                    bytes
+                }
                 val bounds = android.graphics.BitmapFactory.Options()
                     .apply { inJustDecodeBounds = true }
                 android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
@@ -771,11 +843,17 @@ class PlaybackService : MediaLibraryService() {
                 val bitmap =
                     android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
                         ?: return@runCatching false
-                artFile.outputStream().use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                // write-then-rename: widgets decode this path concurrently,
+                // and a torn half-written file decodes to null (art flicker)
+                val tmp = File(cacheDir, "widget_art.tmp")
+                tmp.outputStream().use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
                 }
-                true
+                tmp.renameTo(artFile)
             }.getOrDefault(false)
+            // a transient failure must retry on the next publish — otherwise
+            // the "same uri, skip" check pins the widget on the fallback art
+            if (!ok) lastWidgetArtUri = null
             prefs.edit()
                 .putString(StepcastWidget.KEY_ART_PATH, if (ok) artFile.absolutePath else null)
                 .apply()
@@ -906,12 +984,19 @@ class PlaybackService : MediaLibraryService() {
         // settings toggle applies from the next episode start
         exoPlayer?.skipSilenceEnabled = AppSettings.skipSilence
 
-        currentChapters = emptyList()
         lastAdSkipStartMs = -1L
-        currentChapters = try {
+        val loadedChapters = try {
             app.repository.chaptersFor(episodeId)
         } catch (e: Exception) {
             emptyList()
+        }
+        val loadedOutroMs = app.repository.outroSkipMsFor(episodeId)
+        // adopt only if this episode is still current — several suspensions
+        // above mean another transition may have happened while we loaded
+        if (player.currentMediaItem?.mediaId == mediaItem.mediaId) {
+            currentChapters = loadedChapters
+            currentOutroMs = loadedOutroMs
+            currentSkipEpisodeId = episodeId
         }
         val introMs = app.repository.introSkipMsFor(episodeId)
         val resumeMs = when (reason) {
@@ -964,8 +1049,14 @@ class PlaybackService : MediaLibraryService() {
                 it.id.toString() !in tailIds
         }
         if (fresh.isEmpty()) return
-        for (ep in fresh) app.repository.addToQueueLast(ep.id)
-        player.addMediaItems(fresh.map { episodeToItem(it) })
+        // timeline FIRST, then ONE transactional queue write: the UI's
+        // queueSync collects the queue flow, and per-row inserts used to
+        // let it interleave mid-refill — appending the same episodes twice.
+        // With the timeline already matching, its single emission no-ops.
+        val playable = fresh.filter { app.repository.playableUri(it) != null }
+        if (playable.isEmpty()) return
+        player.addMediaItems(playable.map { episodeToItem(it) })
+        app.repository.appendToQueueLast(playable.map { it.id })
     }
 
     /**
@@ -983,7 +1074,11 @@ class PlaybackService : MediaLibraryService() {
         } catch (e: Exception) {
             null
         } ?: return
-        player.setMediaItem(episodeToItem(next), next.positionMs.coerceAtLeast(0))
+        // respect the streaming-off setting on auto-continue too
+        if (app.repository.playableUri(next) == null) return
+        // resumeStartMs, NOT raw positionMs: a near-end saved position would
+        // instantly complete and cascade-advance ("it skipped my episode")
+        player.setMediaItem(episodeToItem(next), next.resumeStartMs())
         player.prepare()
         player.play()
     }
@@ -998,6 +1093,8 @@ class PlaybackService : MediaLibraryService() {
         if (currentChapters.isEmpty()) return
         val player = mediaSession?.player ?: return
         if (!player.isPlaying) return
+        // chapters must belong to the CURRENT episode (see field comment)
+        if (currentEpisodeId() != currentSkipEpisodeId) return
         val position = player.currentPosition
         val index = currentChapters.indexOfLast { it.startMs <= position }
         if (index < 0) return
@@ -1014,19 +1111,27 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    // Fully synchronous now: the outro length is resolved once per episode
+    // in onEpisodeStarted (no DB query per tick), the value is stamped with
+    // its episode (no acting on stale duration across a suspension — that
+    // used to seek the NEXT episode to the previous one's end), and it
+    // fires at most once per episode so scrubbing back into the credits on
+    // purpose isn't yanked forward again a second later.
     private fun checkOutroSkip() {
+        if (currentOutroMs <= 0) return
         val player = mediaSession?.player ?: return
         if (!player.isPlaying) return
         val episodeId = currentEpisodeId() ?: return
+        if (episodeId != currentSkipEpisodeId) return
+        if (episodeId == outroSkippedForEpisodeId) return
         val duration = player.duration
         if (duration == C.TIME_UNSET || duration <= 0) return
-        val position = player.currentPosition
-        serviceScope.launch {
-            val outroMs = app.repository.outroSkipMsFor(episodeId)
-            if (outroMs > 0 && duration - outroMs > 0 && position >= duration - outroMs) {
-                // jump to the end; STATE_ENDED handling marks played
-                mediaSession?.player?.seekTo(duration)
-            }
+        if (duration - currentOutroMs > 0 &&
+            player.currentPosition >= duration - currentOutroMs
+        ) {
+            outroSkippedForEpisodeId = episodeId
+            // jump to the end; STATE_ENDED handling marks played
+            player.seekTo(duration)
         }
     }
 
@@ -1044,19 +1149,31 @@ class PlaybackService : MediaLibraryService() {
     private fun startSmartPlayByName(name: String): ListenableFuture<SessionResult> =
         serviceScope.future {
             var started: com.stepcast.app.data.SmartPlay? = null
+            var knownName = false
             val episodes = withContext(Dispatchers.IO) {
                 val smartPlay = app.repository.smartPlayList()
                     .firstOrNull { it.name.equals(name, ignoreCase = true) }
                     ?: return@withContext emptyList()
+                knownName = true
                 started = smartPlay
-                app.repository.episodesFor(smartPlay).also { episodes ->
-                    if (episodes.isNotEmpty()) {
-                        app.repository.replaceQueue(episodes.drop(1).map { it.id })
+                // honor streaming-off on this path too (widget/automation/
+                // Auto) — same rule as the in-app SmartPlay start: only
+                // playable episodes enter the timeline
+                app.repository.episodesFor(smartPlay)
+                    .filter { app.repository.playableUri(it) != null }
+                    .also { playable ->
+                        if (playable.isNotEmpty()) {
+                            app.repository.replaceQueue(playable.drop(1).map { it.id })
+                        }
                     }
-                }
             }
             if (episodes.isEmpty()) {
-                return@future SessionResult(SessionResult.RESULT_SUCCESS)
+                // distinguish "no such SmartPlay" (automation typo, stale
+                // pinned shortcut) from "matched but nothing playable"
+                return@future SessionResult(
+                    if (knownName) SessionResult.RESULT_SUCCESS
+                    else SessionResult.RESULT_ERROR_BAD_VALUE
+                )
             }
             AppSettings.setActiveStationId(
                 this@PlaybackService,

@@ -607,23 +607,34 @@ class PlayPauseAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        var nowPlaying: Boolean? = null
+        var startedPlay = false
         sendPlayerCommand(context) { controller ->
             if (controller.isPlaying) {
-                nowPlaying = false
                 controller.pause()
             } else {
-                nowPlaying = true
+                startedPlay = true
                 dispatchPlayMediaKey(context)
             }
         }
         // flip the glyph immediately from this side of the tap — the
         // service's own publish converges the real state right after, but
         // must not be the only thing standing between tap and feedback
-        nowPlaying?.let { playing ->
-            context.getSharedPreferences(StepcastWidget.PREFS, Context.MODE_PRIVATE)
-                .edit().putBoolean(StepcastWidget.KEY_PLAYING, playing).apply()
-            runCatching { updateAllStepcastWidgets(context) }
+        val prefs = context.getSharedPreferences(StepcastWidget.PREFS, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(StepcastWidget.KEY_PLAYING, startedPlay).apply()
+        runCatching { updateAllStepcastWidgets(context) }
+        // a play can silently fail (nothing to resume, focus denied,
+        // network error) and then nothing ever re-publishes — reconcile
+        // the optimistic glyph against reality after a beat
+        if (startedPlay) {
+            kotlinx.coroutines.delay(1_500)
+            var actuallyPlaying = false
+            sendPlayerCommand(context) { controller ->
+                actuallyPlaying = controller.isPlaying
+            }
+            if (!actuallyPlaying) {
+                prefs.edit().putBoolean(StepcastWidget.KEY_PLAYING, false).apply()
+                runCatching { updateAllStepcastWidgets(context) }
+            }
         }
     }
 }
@@ -637,7 +648,7 @@ class PlayPauseAction : ActionCallback {
  * PLAY_PAUSE: if another app somehow holds media-key priority while
  * playing, PLAY is a no-op there instead of pausing it.
  */
-private fun dispatchPlayMediaKey(context: Context) {
+internal fun dispatchPlayMediaKey(context: Context) {
     val audioManager = context.applicationContext
         .getSystemService(android.media.AudioManager::class.java) ?: return
     val code = android.view.KeyEvent.KEYCODE_MEDIA_PLAY

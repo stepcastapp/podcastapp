@@ -55,7 +55,12 @@ class CommandReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                handle(context.applicationContext, app, action, smartPlayName)
+                // hard-bounded: goAsync gives roughly a 10s budget before
+                // the system may kill the receiver — a cold-start controller
+                // connect plus the 8s command wait could blow past it
+                withTimeoutOrNull(7_000) {
+                    handle(context.applicationContext, app, action, smartPlayName)
+                }
             } catch (_: Exception) {
                 // automation must never crash the app process
             } finally {
@@ -95,10 +100,24 @@ class CommandReceiver : BroadcastReceiver() {
                     SessionCommand(PlaybackService.ACTION_REFRESH_NOTIF_BUTTONS, Bundle.EMPTY),
                     Bundle.EMPTY
                 )
-                ACTION_PLAY -> { controller.play(); null }
+                // starting playback from a background broadcast hits the
+                // Android 12+ FGS wall (Media3 swallows the denial into a
+                // pause) — ride the system media-key pipeline instead, the
+                // same fix the widgets use. Pause never needs FGS.
+                ACTION_PLAY -> {
+                    if (!controller.isPlaying) {
+                        com.stepcast.app.widget.dispatchPlayMediaKey(context)
+                    }
+                    null
+                }
                 ACTION_PAUSE -> { controller.pause(); null }
                 ACTION_TOGGLE -> {
-                    if (controller.isPlaying) controller.pause() else controller.play(); null
+                    if (controller.isPlaying) {
+                        controller.pause()
+                    } else {
+                        com.stepcast.app.widget.dispatchPlayMediaKey(context)
+                    }
+                    null
                 }
                 ACTION_NEXT -> { controller.seekToNextMediaItem(); null }
                 ACTION_PREVIOUS -> { controller.seekToPreviousMediaItem(); null }

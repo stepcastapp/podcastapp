@@ -700,6 +700,38 @@ class PodcastRepository(
         db.queueDao().insert(QueueItem(episodeId, (db.queueDao().maxPosition() ?: 0) + 1))
     }
 
+    /**
+     * Batch append in ONE transaction = one Flow emission. Station refill
+     * appends several episodes at once; per-row inserts let the UI's
+     * queueSync interleave mid-refill and double-add the same episodes.
+     */
+    suspend fun appendToQueueLast(episodeIds: List<Long>) {
+        if (episodeIds.isEmpty()) return
+        db.withTransaction {
+            var position = (db.queueDao().maxPosition() ?: 0)
+            for (id in episodeIds) {
+                db.queueDao().insert(QueueItem(id, ++position))
+            }
+        }
+    }
+
+    /**
+     * The one streaming-off policy: where this episode may play from RIGHT
+     * NOW. Local file when downloaded; the remote URL only when streaming
+     * is allowed (or it's a local-folder content: uri); null = not playable
+     * until downloaded. Every timeline-building path routes through this so
+     * "Wi-Fi only" can't leak via queue tails, SmartPlays, station refills,
+     * auto-continue, Android Auto, or resumption.
+     */
+    fun playableUri(episode: Episode): String? {
+        episode.localFilePath
+            ?.let { java.io.File(it) }
+            ?.takeIf { it.exists() }
+            ?.let { return android.net.Uri.fromFile(it).toString() }
+        if (episode.audioUrl.startsWith("content:")) return episode.audioUrl
+        return if (AppSettings.streamWhenNotDownloaded) episode.audioUrl else null
+    }
+
     /** Puts the episode at the front of the up-next queue. */
     suspend fun addToQueueNext(episodeId: Long) {
         db.queueDao().insert(QueueItem(episodeId, (db.queueDao().minPosition() ?: 0) - 1))

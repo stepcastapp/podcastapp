@@ -111,20 +111,40 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
             repository.queue.collect { queue ->
                 val c = controller ?: return@collect
                 if (c.mediaItemCount == 0) return@collect
+                // streaming-off: undownloaded episodes stay in the QUEUE
+                // TABLE (intent) but out of the TIMELINE; when a download
+                // lands, the queue flow re-emits and they slot in
+                val playable = queue.filter { repository.playableUri(it) != null }
+                // cheap pre-check against the current snapshot
                 val currentId = c.currentMediaItem?.mediaId
-                val desired = queue.filter { it.id.toString() != currentId }
-                val curIdx = c.currentMediaItemIndex
-                val existingTail = buildList {
-                    for (i in curIdx + 1 until c.mediaItemCount) {
-                        add(c.getMediaItemAt(i).mediaId)
+                val desired = playable.filter { it.id.toString() != currentId }
+                val tailOf = { idx: Int ->
+                    buildList {
+                        for (i in idx + 1 until c.mediaItemCount) {
+                            add(c.getMediaItemAt(i).mediaId)
+                        }
                     }
                 }
-                if (existingTail == desired.map { it.id.toString() }) return@collect
-                val items = desired.map { mediaItemFor(it, repository.podcast(it.podcastId)) }
-                if (c.mediaItemCount > curIdx + 1) {
-                    c.removeMediaItems(curIdx + 1, c.mediaItemCount)
+                if (tailOf(c.currentMediaItemIndex) == desired.map { it.id.toString() }) {
+                    return@collect
                 }
-                c.addMediaItems(items)
+                // building items suspends (one Room read per entry) — the
+                // player can advance meanwhile. Recompute EVERYTHING from
+                // fresh state after the suspension: a stale index here used
+                // to delete the currently playing item.
+                val itemsById = playable.associate {
+                    it.id.toString() to mediaItemFor(it, repository.podcast(it.podcastId))
+                }
+                val freshCurrentId = c.currentMediaItem?.mediaId ?: return@collect
+                val freshIdx = c.currentMediaItemIndex
+                val freshDesired = playable
+                    .filter { it.id.toString() != freshCurrentId }
+                    .map { it.id.toString() }
+                if (tailOf(freshIdx) == freshDesired) return@collect
+                if (c.mediaItemCount > freshIdx + 1) {
+                    c.removeMediaItems(freshIdx + 1, c.mediaItemCount)
+                }
+                c.addMediaItems(freshDesired.mapNotNull { itemsById[it] })
             }
         }
     }
@@ -216,13 +236,12 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
     }
 
     private fun mediaItemFor(episode: Episode, podcast: Podcast?): MediaItem {
-        val localUri = episode.localFilePath
-            ?.let { java.io.File(it) }
-            ?.takeIf { it.exists() }
-            ?.let { android.net.Uri.fromFile(it).toString() }
+        // callers filter unplayable episodes; the fallback is for the head,
+        // which does its own explicit streaming-off check in play()
+        val uri = repository.playableUri(episode) ?: episode.audioUrl
         return MediaItem.Builder()
             .setMediaId(episode.id.toString())
-            .setUri(localUri ?: episode.audioUrl)
+            .setUri(uri)
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(episode.title)
@@ -263,15 +282,10 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
                 delay(50); waitedMs += 50; c = controller
             }
             if (c == null) return@launch
-            if (com.stepcast.app.data.AppSettings.activeStationId != fromStationId) {
-                com.stepcast.app.data.AppSettings
-                    .setActiveStationId(appContext, fromStationId)
-            }
-            // with streaming off, an undownloaded episode downloads instead
-            if (!com.stepcast.app.data.AppSettings.streamWhenNotDownloaded &&
-                !episode.audioUrl.startsWith("content:") &&
-                episode.localFilePath?.let { java.io.File(it).exists() } != true
-            ) {
+            // with streaming off, an undownloaded episode downloads instead.
+            // This check runs BEFORE the station write: bailing out used to
+            // silently kill a running station without playing anything.
+            if (repository.playableUri(episode) == null) {
                 com.stepcast.app.download.DownloadWorker.start(appContext, episode.id)
                 android.widget.Toast.makeText(
                     appContext,
@@ -281,6 +295,10 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
                 return@launch
+            }
+            if (com.stepcast.app.data.AppSettings.activeStationId != fromStationId) {
+                com.stepcast.app.data.AppSettings
+                    .setActiveStationId(appContext, fromStationId)
             }
             // pin the outgoing episode's position at the exact swap moment —
             // the service's 5s ticker can be up to one tick stale
@@ -311,7 +329,12 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
             }
             repository.replaceQueue(upNext.map { it.id })
             val items = mutableListOf(mediaItemFor(episode, podcast))
-            for (ep in upNext) items += mediaItemFor(ep, repository.podcast(ep.podcastId))
+            for (ep in upNext) {
+                // the queue table keeps intent; the timeline only carries
+                // what can actually play under the streaming setting
+                if (repository.playableUri(ep) == null) continue
+                items += mediaItemFor(ep, repository.podcast(ep.podcastId))
+            }
             // resume at the saved position; near-end/bogus-duration logic
             // lives in resumeStartMs so every start path agrees
             val startMs = episode.resumeStartMs()
