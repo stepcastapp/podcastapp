@@ -7,12 +7,13 @@ plugins {
 
 android {
     namespace = "com.stepcast.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.stepcast.app"
         minSdk = 26
-        targetSdk = 35
+        // Play requirement (2026): new releases must target Android 16
+        targetSdk = 36
         // bump versionCode on every meaningful cut; versionName tracks the
         // feature era (0.2 = post-review-program daily driver). The Play
         // release workflow overrides both per upload via -P properties.

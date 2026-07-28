@@ -144,7 +144,7 @@ install the Play (or upload-key) build, restore.
 
 ## Technical notes
 
-- targetSdk 35 satisfies the current Play requirement.
+- targetSdk 36 (Android 16) satisfies the 2026 Play target requirement.
 - `usesCleartextTraffic="true"` is deliberate (plain-HTTP feeds exist) —
   justify in review notes if asked.
 - The pre-launch report on the internal/closed track exercises ~10
