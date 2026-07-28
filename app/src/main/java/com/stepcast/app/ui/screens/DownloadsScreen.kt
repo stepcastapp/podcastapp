@@ -55,6 +55,9 @@ fun DownloadsScreen(repository: PodcastRepository) {
     val podcastsById = podcasts.associateBy { it.id }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
+    val dismissedMsg = stringResource(R.string.download_dismissed)
+    val undoLabel = stringResource(R.string.undo)
 
     val downloading = activity.filter { it.isDownloading && it.downloadProgress > 0 }
     val waiting = activity.filter { it.isDownloading && it.downloadProgress <= 0 }
@@ -96,6 +99,7 @@ fun DownloadsScreen(repository: PodcastRepository) {
 
     var confirmCancelAll by remember { mutableStateOf(false) }
 
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         ScreenTitle(
             stringResource(R.string.downloads),
@@ -234,12 +238,34 @@ fun DownloadsScreen(repository: PodcastRepository) {
                         onPrimary = { DownloadWorker.start(context, episode.id) },
                         secondaryLabel = stringResource(R.string.dismiss),
                         onSecondary = {
-                            scope.launch { repository.dismissDownload(episode.id) }
+                            scope.launch {
+                                repository.dismissDownload(episode.id)
+                                val r = snackbar.showSnackbar(
+                                    dismissedMsg,
+                                    actionLabel = undoLabel,
+                                    duration = androidx.compose.material3
+                                        .SnackbarDuration.Short
+                                )
+                                if (r == androidx.compose.material3
+                                        .SnackbarResult.ActionPerformed
+                                ) {
+                                    // bring the row back as FAILED so Retry
+                                    // is one tap away again
+                                    repository.setDownloadStatus(
+                                        episode.id, Episode.DOWNLOAD_FAILED
+                                    )
+                                }
+                            }
                         }
                     )
                 }
             }
         }
+    }
+    androidx.compose.material3.SnackbarHost(
+        hostState = snackbar,
+        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+    )
     }
 
     if (confirmCancelAll) {

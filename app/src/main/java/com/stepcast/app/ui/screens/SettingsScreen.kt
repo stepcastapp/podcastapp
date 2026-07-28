@@ -1191,11 +1191,11 @@ private fun SwipeActionPicker(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.horizontalScroll(rememberScrollState())
     ) {
-        for ((key, chipLabel) in AppSettings.SWIPE_LABELS) {
+        for (key in AppSettings.SWIPE_ACTIONS) {
             FilterChip(
                 selected = selected == key,
                 onClick = { onPick(key) },
-                label = { Text(chipLabel) }
+                label = { Text(com.stepcast.app.ui.theme.swipeActionLabel(key)) }
             )
         }
     }
@@ -1259,11 +1259,10 @@ private fun SectionHeader(
             Icon(
                 if (expanded) Icons.Rounded.KeyboardArrowUp
                 else Icons.Rounded.KeyboardArrowDown,
-                contentDescription = if (expanded) {
-                    "Collapse $title"
-                } else {
-                    "Expand $title"
-                },
+                contentDescription = stringResource(
+                    if (expanded) R.string.collapse_section else R.string.expand_section,
+                    title
+                ),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

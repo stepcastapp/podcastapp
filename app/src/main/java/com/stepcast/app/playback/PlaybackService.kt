@@ -673,21 +673,9 @@ class PlaybackService : MediaLibraryService() {
         // episodes out first, so the audioUrl fallback here only serves
         // paths that deliberately allow streaming (e.g. browse previews)
         val uri = app.repository.playableUri(episode) ?: episode.audioUrl
-        return MediaItem.Builder()
-            .setMediaId(episode.id.toString())
-            .setUri(uri)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(episode.title)
-                    .setArtist(owner?.title ?: "")
-                    .setArtworkUri(
-                        (episode.imageUrl ?: owner?.imageUrl)?.let(Uri::parse)
-                    )
-                    .setIsBrowsable(false)
-                    .setIsPlayable(true)
-                    .build()
-            )
-            .build()
+        return com.stepcast.app.data.EpisodeMediaItems.build(
+            episode, uri, owner?.title, artworkFallback = owner?.imageUrl
+        )
     }
 
     /** minutes > 0 arms a countdown; endOfEpisode pauses after the current one; both zero/false cancels. */

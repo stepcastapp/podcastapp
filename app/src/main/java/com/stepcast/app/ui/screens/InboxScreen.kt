@@ -46,7 +46,8 @@ import kotlinx.coroutines.launch
 fun InboxScreen(
     repository: PodcastRepository,
     player: PlayerConnection,
-    playerState: PlayerUiState
+    playerState: PlayerUiState,
+    onOpenPodcast: (Long) -> Unit = {}
 ) {
     val episodes by repository.inbox().collectAsState(initial = emptyList())
     val podcasts by repository.podcasts.collectAsState(initial = emptyList())
@@ -124,6 +125,7 @@ fun InboxScreen(
                         },
                         podcastTitle = podcast?.title,
                         inQueue = episode.id in queuedIds,
+                        onGoToPodcast = { onOpenPodcast(episode.podcastId) },
                         onClick = { player.play(episode, podcast) },
                         onPlayNext = {
                             scope.launch {

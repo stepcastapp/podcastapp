@@ -55,7 +55,13 @@ fun HistoryScreen(
     val podcasts by repository.podcasts.collectAsState(initial = emptyList())
     val byId = podcasts.associateBy { it.id }
     val scope = rememberCoroutineScope()
+    val snackbar = androidx.compose.runtime.remember {
+        androidx.compose.material3.SnackbarHostState()
+    }
+    val markedUnplayedMsg = stringResource(R.string.marked_unplayed)
+    val undoLabel = stringResource(R.string.undo)
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         ScreenTitle(
             stringResource(R.string.history),
@@ -128,7 +134,20 @@ fun HistoryScreen(
                         }
                         IconButton(
                             onClick = {
-                                scope.launch { repository.setPlayed(episode.id, false) }
+                                scope.launch {
+                                    repository.setPlayed(episode.id, false)
+                                    val r = snackbar.showSnackbar(
+                                        markedUnplayedMsg,
+                                        actionLabel = undoLabel,
+                                        duration = androidx.compose.material3
+                                            .SnackbarDuration.Short
+                                    )
+                                    if (r == androidx.compose.material3
+                                            .SnackbarResult.ActionPerformed
+                                    ) {
+                                        repository.setPlayed(episode.id, true)
+                                    }
+                                }
                             }
                         ) {
                             Icon(
@@ -148,5 +167,10 @@ fun HistoryScreen(
                 }
             }
         }
+    }
+    androidx.compose.material3.SnackbarHost(
+        hostState = snackbar,
+        modifier = Modifier.align(Alignment.BottomCenter)
+    )
     }
 }

@@ -16,7 +16,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TimeInput
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -136,7 +139,12 @@ fun ScheduleScreen(
                         slot,
                         reasonCheckpoint
                             .replace("%1\$s", checkpointNames[i])
-                            .replace("%2\$d", autoCount.toString())
+                            .replace(
+                                "%2\$s",
+                                context.resources.getQuantityString(
+                                    R.plurals.n_shows, autoCount, autoCount
+                                )
+                            )
                     )
                 }
             }
@@ -460,6 +468,7 @@ private fun retentionText(podcast: Podcast): String {
     return parts.joinToString("  ·  ")
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TimeDialog(
     title: String,
@@ -467,26 +476,22 @@ private fun TimeDialog(
     onDismiss: () -> Unit,
     onSave: (Int) -> Unit
 ) {
-    var text by remember { mutableStateOf(initial) }
-    val parsed = RefreshSchedule.parseAnchor(text)
+    // structured time input instead of a hand-typed H:MM field with a
+    // silently-greyed Save
+    val context = LocalContext.current
+    val initialMinutes = RefreshSchedule.parseAnchor(initial) ?: (6 * 60 + 30)
+    val state = rememberTimePickerState(
+        initialHour = initialMinutes / 60,
+        initialMinute = initialMinutes % 60,
+        is24Hour = android.text.format.DateFormat.is24HourFormat(context)
+    )
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { t ->
-                    text = t.filter { it.isDigit() || it == ':' }.take(5)
-                },
-                label = { Text(stringResource(R.string.from_h_mm)) },
-                singleLine = true,
-                isError = text.isNotBlank() && parsed == null
-            )
-        },
+        text = { TimeInput(state = state) },
         confirmButton = {
             TextButton(
-                onClick = { parsed?.let(onSave) },
-                enabled = parsed != null
+                onClick = { onSave(state.hour * 60 + state.minute) }
             ) { Text(stringResource(R.string.save)) }
         },
         dismissButton = {
@@ -497,6 +502,7 @@ private fun TimeDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QuietDialog(
     initialStart: String,
@@ -504,10 +510,20 @@ private fun QuietDialog(
     onDismiss: () -> Unit,
     onSave: (Int, Int) -> Unit
 ) {
-    var startText by remember { mutableStateOf(initialStart) }
-    var endText by remember { mutableStateOf(initialEnd) }
-    val start = RefreshSchedule.parseAnchor(startText)
-    val end = RefreshSchedule.parseAnchor(endText)
+    val context = LocalContext.current
+    val is24h = android.text.format.DateFormat.is24HourFormat(context)
+    val startMinutes = RefreshSchedule.parseAnchor(initialStart) ?: 1380
+    val endMinutes = RefreshSchedule.parseAnchor(initialEnd) ?: 360
+    val startState = rememberTimePickerState(
+        initialHour = startMinutes / 60,
+        initialMinute = startMinutes % 60,
+        is24Hour = is24h
+    )
+    val endState = rememberTimePickerState(
+        initialHour = endMinutes / 60,
+        initialMinute = endMinutes % 60,
+        is24Hour = is24h
+    )
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.schedule_quiet_hours)) },
@@ -518,35 +534,28 @@ private fun QuietDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Row(Modifier.padding(top = 8.dp)) {
-                    OutlinedTextField(
-                        value = startText,
-                        onValueChange = { t ->
-                            startText = t.filter { it.isDigit() || it == ':' }.take(5)
-                        },
-                        label = { Text(stringResource(R.string.quiet_from)) },
-                        singleLine = true,
-                        isError = startText.isNotBlank() && start == null,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedTextField(
-                        value = endText,
-                        onValueChange = { t ->
-                            endText = t.filter { it.isDigit() || it == ':' }.take(5)
-                        },
-                        label = { Text(stringResource(R.string.quiet_until)) },
-                        singleLine = true,
-                        isError = endText.isNotBlank() && end == null,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                Text(
+                    stringResource(R.string.quiet_from),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                )
+                TimeInput(state = startState)
+                Text(
+                    stringResource(R.string.quiet_until),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                TimeInput(state = endState)
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { if (start != null && end != null) onSave(start, end) },
-                enabled = start != null && end != null
+                onClick = {
+                    onSave(
+                        startState.hour * 60 + startState.minute,
+                        endState.hour * 60 + endState.minute
+                    )
+                }
             ) { Text(stringResource(R.string.save)) }
         },
         dismissButton = {
@@ -557,6 +566,7 @@ private fun QuietDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RuleDialog(
     podcast: Podcast,
@@ -565,18 +575,18 @@ private fun RuleDialog(
     onOpenShow: () -> Unit,
     onSave: (Int, Int) -> Unit
 ) {
+    val context = LocalContext.current
     var mode by remember { mutableStateOf(podcast.scheduleMode) }
-    var timeText by remember {
-        mutableStateOf(
-            when (podcast.scheduleMode) {
-                ScheduleEngine.MODE_DAILY_AT ->
-                    RefreshSchedule.formatAnchor(podcast.scheduleParam)
-                ScheduleEngine.MODE_WEEKLY_AT ->
-                    RefreshSchedule.formatAnchor(podcast.scheduleParam % 1440)
-                else -> "7:00"
-            }
-        )
-    }
+    val initialTimeMinutes = when (podcast.scheduleMode) {
+        ScheduleEngine.MODE_DAILY_AT -> podcast.scheduleParam
+        ScheduleEngine.MODE_WEEKLY_AT -> podcast.scheduleParam % 1440
+        else -> 7 * 60
+    }.coerceIn(0, 1439)
+    val timeState = rememberTimePickerState(
+        initialHour = initialTimeMinutes / 60,
+        initialMinute = initialTimeMinutes % 60,
+        is24Hour = android.text.format.DateFormat.is24HourFormat(context)
+    )
     var weekday by remember {
         mutableStateOf(
             if (podcast.scheduleMode == ScheduleEngine.MODE_WEEKLY_AT) {
@@ -586,10 +596,9 @@ private fun RuleDialog(
             }
         )
     }
-    val parsedTime = RefreshSchedule.parseAnchor(timeText)
+    val pickedMinutes = timeState.hour * 60 + timeState.minute
     val needsTime = mode == ScheduleEngine.MODE_DAILY_AT ||
         mode == ScheduleEngine.MODE_WEEKLY_AT
-    val valid = !needsTime || parsedTime != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -660,16 +669,11 @@ private fun RuleDialog(
                     }
                 }
                 if (needsTime) {
-                    OutlinedTextField(
-                        value = timeText,
-                        onValueChange = { t ->
-                            timeText = t.filter { it.isDigit() || it == ':' }.take(5)
-                        },
-                        label = { Text(stringResource(R.string.from_h_mm)) },
-                        singleLine = true,
-                        isError = timeText.isNotBlank() && parsedTime == null,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
+                    androidx.compose.foundation.layout.Box(
+                        Modifier.padding(top = 8.dp)
+                    ) {
+                        TimeInput(state = timeState)
+                    }
                 }
                 TextButton(onClick = onOpenShow) {
                     Text(stringResource(R.string.open_show_settings))
@@ -680,14 +684,13 @@ private fun RuleDialog(
             TextButton(
                 onClick = {
                     val param = when (mode) {
-                        ScheduleEngine.MODE_DAILY_AT -> parsedTime ?: 0
+                        ScheduleEngine.MODE_DAILY_AT -> pickedMinutes
                         ScheduleEngine.MODE_WEEKLY_AT ->
-                            weekday * 1440 + (parsedTime ?: 0)
+                            weekday * 1440 + pickedMinutes
                         else -> 0
                     }
                     onSave(mode, param)
-                },
-                enabled = valid
+                }
             ) { Text(stringResource(R.string.save)) }
         },
         dismissButton = {

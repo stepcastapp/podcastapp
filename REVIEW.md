@@ -143,19 +143,18 @@ references are as of commit `ab06455` and drift as fixes land.
       thread.
 
 
-Partially deferred within Wave 4 (tracked, not forgotten):
-- Inbox rows: go-to-podcast needs a navigation callback InboxScreen
-  doesn't receive yet.
-- PLAYER widget responsive sizing (drop Done/seeks when narrow).
-- rememberSaveable: primitives covered; complex dialog states (rule
-  editor entity, multi-select lists) still reset on rotation.
-- Feedback unification landed for Settings; History/Downloads remain
-  snackbar-less for their minor actions.
-- One shared MediaItem builder (two near-duplicates remain; both now
-  route URIs through playableUri, which removes the behavioral drift).
-- Hardcoded-English stragglers: explainSmartPlayEntry, swipe-action
-  labels, "1 shows"-style plurals in two notification strings.
-- Bottom-bar tab highlight when opening a podcast from the queue.
+Deferred-items batch (post-Wave-4) landed: Inbox go-to-podcast; PLAYER
+widget responsive sizing; History/Downloads undo snackbars; shared
+MediaItem builder; hardcoded-English stragglers (rule explanations,
+swipe labels, shows/matches plurals, collapse/expand descriptions);
+queue-origin tab highlight; structured TimeInput pickers for every
+schedule time; SmartPlay shortcuts keyed by id (renames keep pinned
+shortcuts working); local-folder feeds rescan at most daily.
+
+Still open (small):
+- rememberSaveable for complex dialog states (rule editor entity,
+  multi-select lists).
+- Notification-permission rationale/denial handling.
 ## Noted, deliberately deferred
 
 - Media3 swallowing FGS denial into a pause (upstream behavior; mitigated

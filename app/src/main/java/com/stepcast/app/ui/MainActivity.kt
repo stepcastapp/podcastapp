@@ -217,7 +217,11 @@ fun StepcastApp(
                     val queueOwned = currentRoute == "queue" ||
                         currentRoute == "downloads" ||
                         currentRoute == "history" ||
-                        currentRoute?.startsWith("smartplay/") == true
+                        currentRoute?.startsWith("smartplay/") == true ||
+                        // a podcast opened FROM a queue-owned screen keeps
+                        // that tab lit (the route carries its origin)
+                        (currentRoute?.startsWith("podcast/") == true &&
+                            backStackEntry?.arguments?.getString("from") == "queue")
                     // save/restore instead of destroy/recreate, so each tab
                     // keeps its scroll position across switches; tapping the
                     // tab you're already on returns to that tab's root
@@ -319,7 +323,10 @@ fun StepcastApp(
                 com.stepcast.app.ui.screens.InboxScreen(
                     repository = app.repository,
                     player = player,
-                    playerState = playerState
+                    playerState = playerState,
+                    onOpenPodcast = {
+                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                    }
                 )
             }
             composable("settings") {
@@ -364,7 +371,9 @@ fun StepcastApp(
                         navController.navigate("history") { launchSingleTop = true }
                     },
                     onPodcastClick = {
-                        navController.navigate("podcast/$it") { launchSingleTop = true }
+                        navController.navigate("podcast/$it?from=queue") {
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
@@ -433,8 +442,14 @@ fun StepcastApp(
                 )
             }
             composable(
-                route = "podcast/{podcastId}",
-                arguments = listOf(navArgument("podcastId") { type = NavType.LongType })
+                route = "podcast/{podcastId}?from={from}",
+                arguments = listOf(
+                    navArgument("podcastId") { type = NavType.LongType },
+                    navArgument("from") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
             ) { entry ->
                 val podcastId = entry.arguments?.getLong("podcastId") ?: return@composable
                 PodcastScreen(

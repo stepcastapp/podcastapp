@@ -70,6 +70,12 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         val due = all.filter { podcast ->
             if (categoryIds != null && podcast.id !in categoryIds) return@filter false
             if (force) return@filter true
+            // local-folder virtual feeds: a recursive SAF walk (plus a
+            // metadata pass) per checkpoint is battery for nothing — the
+            // folder rarely changes; rescan at most daily unless forced
+            if (podcast.localFolderUri != null) {
+                return@filter now - podcast.lastRefreshed >= 24 * 3_600_000L
+            }
             ScheduleEngine.isDue(
                 mode = podcast.scheduleMode,
                 param = podcast.scheduleParam,

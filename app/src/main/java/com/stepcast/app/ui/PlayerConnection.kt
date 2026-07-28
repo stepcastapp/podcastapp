@@ -239,19 +239,9 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
         // callers filter unplayable episodes; the fallback is for the head,
         // which does its own explicit streaming-off check in play()
         val uri = repository.playableUri(episode) ?: episode.audioUrl
-        return MediaItem.Builder()
-            .setMediaId(episode.id.toString())
-            .setUri(uri)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(episode.title)
-                    .setArtist(podcast?.title ?: "")
-                    .setArtworkUri(
-                        (episode.imageUrl ?: podcast?.imageUrl)?.let(android.net.Uri::parse)
-                    )
-                    .build()
-            )
-            .build()
+        return com.stepcast.app.data.EpisodeMediaItems.build(
+            episode, uri, podcast?.title, artworkFallback = podcast?.imageUrl
+        )
     }
 
     /**

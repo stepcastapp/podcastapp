@@ -248,13 +248,13 @@ fun EpisodeRow(
                 ) {
                     Icon(
                         swipeActionIcon(AppSettings.swipeRightAction),
-                        contentDescription = AppSettings.SWIPE_LABELS[AppSettings.swipeRightAction],
+                        contentDescription = com.stepcast.app.ui.theme.swipeActionLabel(AppSettings.swipeRightAction),
                         tint = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                     Box(Modifier.weight(1f))
                     Icon(
                         swipeActionIcon(AppSettings.swipeLeftAction),
-                        contentDescription = AppSettings.SWIPE_LABELS[AppSettings.swipeLeftAction],
+                        contentDescription = com.stepcast.app.ui.theme.swipeActionLabel(AppSettings.swipeLeftAction),
                         tint = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 }

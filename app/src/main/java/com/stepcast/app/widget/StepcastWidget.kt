@@ -324,6 +324,17 @@ class StepcastWidget : GlanceAppWidget() {
 
     override val stateDefinition = PreferencesGlanceStateDefinition
 
+    // the transport row is ~206dp of fixed buttons: below ~230dp the Done
+    // button goes, below ~170dp the seek pair goes too (play/pause is the
+    // one thing that must survive any resize)
+    override val sizeMode = SizeMode.Responsive(
+        setOf(
+            DpSize(110.dp, 100.dp),
+            DpSize(170.dp, 100.dp),
+            DpSize(230.dp, 100.dp)
+        )
+    )
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
             // read INSIDE the composition — currentState changes on every
@@ -376,29 +387,36 @@ class StepcastWidget : GlanceAppWidget() {
                 )
                 Spacer(GlanceModifier.height(10.dp))
             }
+            val width = androidx.glance.LocalSize.current.width
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = GlanceModifier.fillMaxWidth()
             ) {
-                TransportButton(
-                    R.drawable.ic_notif_replay,
-                    "Seek back",
-                    opacity,
-                    actionRunCallback<SeekBackAction>()
-                )
-                Spacer(GlanceModifier.width(10.dp))
+                // narrow widgets drop buttons instead of clipping the LAST
+                // one off-screen (Done was silently unreachable)
+                if (width >= 170.dp) {
+                    TransportButton(
+                        R.drawable.ic_notif_replay,
+                        "Seek back",
+                        opacity,
+                        actionRunCallback<SeekBackAction>()
+                    )
+                    Spacer(GlanceModifier.width(10.dp))
+                }
                 PlayPauseButton(state.isPlaying, opacity)
-                Spacer(GlanceModifier.width(10.dp))
-                TransportButton(
-                    R.drawable.ic_notif_forward,
-                    "Seek forward",
-                    opacity,
-                    actionRunCallback<SeekForwardAction>()
-                )
+                if (width >= 170.dp) {
+                    Spacer(GlanceModifier.width(10.dp))
+                    TransportButton(
+                        R.drawable.ic_notif_forward,
+                        "Seek forward",
+                        opacity,
+                        actionRunCallback<SeekForwardAction>()
+                    )
+                }
                 // same setting that gates the notification's Done button —
                 // read inside the composition so a toggle can take effect
-                if (AppSettings.notificationDoneButton) {
+                if (width >= 230.dp && AppSettings.notificationDoneButton) {
                     Spacer(GlanceModifier.width(10.dp))
                     TransportButton(
                         R.drawable.ic_notif_done,

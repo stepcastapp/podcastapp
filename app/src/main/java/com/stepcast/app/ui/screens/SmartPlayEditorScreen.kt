@@ -72,7 +72,9 @@ fun SmartPlayEditorScreen(
         androidx.compose.runtime.mutableStateOf(mapOf<Long, Int>())
     }
     var explains by androidx.compose.runtime.remember {
-        androidx.compose.runtime.mutableStateOf(mapOf<Long, String>())
+        androidx.compose.runtime.mutableStateOf(
+            mapOf<Long, com.stepcast.app.data.PodcastRepository.SmartPlayExplain>()
+        )
     }
     androidx.compose.runtime.LaunchedEffect(entries) {
         matchCounts = entries.associate { it.id to repository.countSmartPlayMatches(it) }
@@ -177,14 +179,16 @@ fun SmartPlayEditorScreen(
                         )
                         val matches = matchCounts[entry.id]
                         val explain = if (matches == 0) {
-                            explains[entry.id]?.let { " — $it" }.orEmpty()
+                            explains[entry.id]?.let { " — " + explainText(it) }.orEmpty()
                         } else {
                             ""
                         }
                         Text(
                             entryRuleLabel(entry) +
                                 (matches?.let {
-                                    " · " + stringResource(R.string.n_match_now, it)
+                                    " · " + androidx.compose.ui.res.pluralStringResource(
+                                        R.plurals.n_matches_now, it, it
+                                    )
                                 } ?: "") + explain,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (matches == 0) {
@@ -279,6 +283,21 @@ private fun entryScopeLabel(entry: SmartPlayEntry, podcastsById: Map<Long, Podca
         entry.folder != null -> entry.folder
         else -> stringResource(R.string.all_podcasts)
     }
+
+
+@Composable
+private fun explainText(
+    explain: com.stepcast.app.data.PodcastRepository.SmartPlayExplain
+): String = when (explain) {
+    is com.stepcast.app.data.PodcastRepository.SmartPlayExplain.Feed ->
+        stringResource(R.string.explain_feed, explain.episodes, explain.unplayed)
+    is com.stepcast.app.data.PodcastRepository.SmartPlayExplain.Category ->
+        androidx.compose.ui.res.pluralStringResource(
+            R.plurals.explain_category_podcasts, explain.podcasts, explain.podcasts
+        )
+    com.stepcast.app.data.PodcastRepository.SmartPlayExplain.Everything ->
+        stringResource(R.string.explain_everything)
+}
 
 @Composable
 private fun entryRuleLabel(entry: SmartPlayEntry): String {

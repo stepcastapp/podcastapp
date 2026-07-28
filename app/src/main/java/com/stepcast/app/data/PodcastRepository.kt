@@ -893,17 +893,22 @@ class PodcastRepository(
      * Why does a rule match nothing? Reports what the rule's scope really
      * contains so a broken pointer is visible instead of mysterious.
      */
-    suspend fun explainSmartPlayEntry(entry: SmartPlayEntry): String {
+    /** Raw scope counts; the UI phrases them (strings live in resources). */
+    sealed class SmartPlayExplain {
+        data class Feed(val episodes: Int, val unplayed: Int) : SmartPlayExplain()
+        data class Category(val podcasts: Int) : SmartPlayExplain()
+        object Everything : SmartPlayExplain()
+    }
+
+    suspend fun explainSmartPlayEntry(entry: SmartPlayEntry): SmartPlayExplain {
         entry.podcastId?.let { id ->
             val episodes = db.episodeDao().listForPodcast(id)
-            val unplayed = episodes.count { !it.played }
-            return "target feed has ${episodes.size} episodes, $unplayed unplayed"
+            return SmartPlayExplain.Feed(episodes.size, episodes.count { !it.played })
         }
         entry.folder?.let { folder ->
-            val members = db.podcastCategoryDao().memberCount(folder)
-            return "category has $members podcasts"
+            return SmartPlayExplain.Category(db.podcastCategoryDao().memberCount(folder))
         }
-        return "scope: everything"
+        return SmartPlayExplain.Everything
     }
 
     suspend fun smartPlayEntryList(smartPlayId: Long): List<SmartPlayEntry> =

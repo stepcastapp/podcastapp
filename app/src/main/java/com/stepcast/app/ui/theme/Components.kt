@@ -147,3 +147,16 @@ fun EmptyState(
         )
     }
 }
+
+/** User-facing label for a swipe-action key (AppSettings.SWIPE_*). */
+@androidx.compose.runtime.Composable
+fun swipeActionLabel(key: String): String =
+    androidx.compose.ui.res.stringResource(
+        when (key) {
+            com.stepcast.app.data.AppSettings.SWIPE_QUEUE -> com.stepcast.app.R.string.swipe_queue
+            com.stepcast.app.data.AppSettings.SWIPE_DOWNLOAD -> com.stepcast.app.R.string.swipe_download
+            com.stepcast.app.data.AppSettings.SWIPE_DONE -> com.stepcast.app.R.string.swipe_done
+            else -> com.stepcast.app.R.string.swipe_played
+        }
+    )
+

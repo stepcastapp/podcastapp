@@ -313,12 +313,12 @@ object AppSettings {
     }
 
     fun setSwipeRightAction(context: Context, action: String) {
-        swipeRightAction = action.takeIf { it in SWIPE_LABELS } ?: SWIPE_PLAYED
+        swipeRightAction = action.takeIf { it in SWIPE_ACTIONS } ?: SWIPE_PLAYED
         putString(context, KEY_SWIPE_RIGHT, swipeRightAction)
     }
 
     fun setSwipeLeftAction(context: Context, action: String) {
-        swipeLeftAction = action.takeIf { it in SWIPE_LABELS } ?: SWIPE_QUEUE
+        swipeLeftAction = action.takeIf { it in SWIPE_ACTIONS } ?: SWIPE_QUEUE
         putString(context, KEY_SWIPE_LEFT, swipeLeftAction)
     }
 
@@ -401,10 +401,7 @@ object AppSettings {
     const val SWIPE_DOWNLOAD = "download"
     const val SWIPE_DONE = "done"
 
-    val SWIPE_LABELS = linkedMapOf(
-        SWIPE_PLAYED to "Played",
-        SWIPE_QUEUE to "Queue",
-        SWIPE_DOWNLOAD to "Download",
-        SWIPE_DONE to "Done + delete"
-    )
+    /** Ordered action keys; labels live in string resources (see
+     *  com.stepcast.app.ui.theme.swipeActionLabel). */
+    val SWIPE_ACTIONS = listOf(SWIPE_PLAYED, SWIPE_QUEUE, SWIPE_DOWNLOAD, SWIPE_DONE)
 }

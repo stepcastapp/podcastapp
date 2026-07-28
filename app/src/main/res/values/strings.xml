@@ -320,7 +320,7 @@
     <string name="rule_weekly_at">Weekly, %1$s %2$s</string>
     <string name="rule_manual">Manual only</string>
     <string name="rule_manual_hint">Never checked automatically</string>
-    <string name="reason_checkpoint">%1$s checkpoint · %2$d shows</string>
+    <string name="reason_checkpoint">%1$s checkpoint · %2$s</string>
     <string name="reason_release">%1$s — around its usual release</string>
     <string name="reason_hourly">%1$s — hourly</string>
     <string name="reason_daily">%1$s — daily slot</string>
@@ -391,7 +391,6 @@
     <string name="all_episodes">All episodes</string>
     <string name="downloaded_only">downloaded only</string>
     <string name="incl_played">incl. played</string>
-    <string name="n_match_now">%1$d match now</string>
     <string name="episodes_older_marked_played">Episodes older than %1$s marked played</string>
     <string name="new_rule">New rule</string>
     <string name="edit_rule">Edit rule</string>
@@ -441,6 +440,27 @@
     <string name="follow_transcript">Follow along</string>
     <string name="this_episode_only">Just this episode</string>
     <string name="last_backup_at">Last automatic backup: %1$s</string>
+    <string name="swipe_played">Played</string>
+    <string name="swipe_queue">Queue</string>
+    <string name="swipe_download">Download</string>
+    <string name="swipe_done">Done + delete</string>
+    <string name="collapse_section">Collapse %1$s</string>
+    <string name="expand_section">Expand %1$s</string>
+    <string name="explain_feed">target feed has %1$d episodes, %2$d unplayed</string>
+    <string name="explain_everything">scope: everything</string>
+    <string name="download_dismissed">Download dismissed</string>
+    <plurals name="n_shows">
+        <item quantity="one">%d show</item>
+        <item quantity="other">%d shows</item>
+    </plurals>
+    <plurals name="n_matches_now">
+        <item quantity="one">%d match now</item>
+        <item quantity="other">%d matches now</item>
+    </plurals>
+    <plurals name="explain_category_podcasts">
+        <item quantity="one">category has %d podcast</item>
+        <item quantity="other">category has %d podcasts</item>
+    </plurals>
     <string name="sort_name_asc">Name A→Z</string>
     <string name="sort_name_desc">Name Z→A</string>
     <string name="sort_oldest">Oldest first</string>
