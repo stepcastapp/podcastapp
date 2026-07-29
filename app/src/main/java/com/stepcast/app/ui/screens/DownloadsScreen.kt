@@ -126,7 +126,11 @@ fun DownloadsScreen(repository: PodcastRepository) {
 
         // bulk actions — the interesting one is the Wi-Fi override
         Row(Modifier.padding(start = 8.dp)) {
-            if (wifiOnly && (waiting.isNotEmpty() || failed.isNotEmpty())) {
+            // only when the metered network is the thing in the way — on
+            // Wi-Fi this offered to solve a problem the user doesn't have
+            if (wifiOnly && onMeteredNetwork &&
+                (waiting.isNotEmpty() || failed.isNotEmpty())
+            ) {
                 TextButton(onClick = {
                     (waiting + failed).forEach {
                         DownloadWorker.start(context, it.id, allowMetered = true)

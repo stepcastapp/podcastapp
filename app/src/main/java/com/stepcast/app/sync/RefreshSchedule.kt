@@ -44,8 +44,13 @@ object RefreshSchedule {
         cal.set(Calendar.MINUTE, (anchorMinutes % 60).coerceIn(0, 59))
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
-        var anchor = cal.timeInMillis
-        if (anchor > nowMs) anchor -= 86_400_000L
+        if (cal.timeInMillis > nowMs) {
+            // calendar day-step, not minus-24h: across a DST change
+            // yesterday is 23 or 25 hours long, and a fixed 86400000 lands
+            // the anchor an hour off its wall-clock time
+            cal.add(Calendar.DAY_OF_MONTH, -1)
+        }
+        val anchor = cal.timeInMillis
         val stepMs = freqHours.coerceAtLeast(1) * 3_600_000L
         val steps = (nowMs - anchor) / stepMs
         return anchor + steps * stepMs

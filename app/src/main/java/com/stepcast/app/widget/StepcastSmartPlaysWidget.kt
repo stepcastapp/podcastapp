@@ -60,7 +60,7 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
             // between updates, so anything read out here in provideGlance
             // would be frozen for the widget's lifetime (see the note on
             // updateAllStepcastWidgets, which seeds this state)
-            val names = smartPlayNamesFrom(context, currentState())
+            val plays = smartPlaysFrom(context, currentState())
             val opacity = widgetOpacity(context, id)
             GlanceTheme {
                 Column(
@@ -80,7 +80,7 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                             .clickable(actionStartActivity<MainActivity>())
                     )
                     Spacer(GlanceModifier.height(4.dp))
-                    if (names.isEmpty()) {
+                    if (plays.isEmpty()) {
                         Box(
                             GlanceModifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
@@ -93,7 +93,7 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                             )
                         }
                     }
-                    for (name in names.take(6)) {
+                    for ((playId, name) in plays.take(6)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = GlanceModifier
@@ -103,9 +103,11 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                                     // an activity start (not a broadcast) so the
                                     // service may go foreground from a background
                                     // tap — see PlaybackTrampolineActivity. The
-                                    // unique data URI keeps each name's
+                                    // unique data URI keeps each row's
                                     // PendingIntent distinct (equal-extras
-                                    // intents would collapse to one).
+                                    // intents would collapse to one). The ID is
+                                    // authoritative (survives renames); the name
+                                    // rides along as a fallback for old widgets.
                                     androidx.glance.appwidget.action.actionStartActivity(
                                         Intent(
                                             context,
@@ -114,11 +116,12 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                                         )
                                             .setData(
                                                 android.net.Uri.parse(
-                                                    "stepcast://smartplay/" +
+                                                    "stepcast://smartplay/$playId/" +
                                                         android.net.Uri.encode(name)
                                                 )
                                             )
                                             .putExtra("smartplay", name)
+                                            .putExtra("smartplayId", playId)
                                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     )
                                 )
@@ -145,23 +148,31 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
     }
 
     companion object {
-        /** "\n"-joined SmartPlay names, seeded by updateAllStepcastWidgets. */
+        /**
+         * "\n"-joined "id|name" lines, seeded by updateAllStepcastWidgets.
+         * (Pre-0.5 state was bare names — the parser treats a line without
+         * '|' as id 0, which falls back to name lookup in the trampoline.)
+         */
         val P_SMARTPLAY_NAMES = stringPreferencesKey("smartPlayNames")
     }
 }
 
 /**
- * Names for one render: the widget's Glance state, falling back to a
- * one-time direct load for a freshly placed widget that hasn't been
+ * (id, name) pairs for one render: the widget's Glance state, falling back
+ * to a one-time direct load for a freshly placed widget that hasn't been
  * seeded yet (same shape as widgetStateFrom's fallback).
  */
-private fun smartPlayNamesFrom(context: Context, prefs: Preferences): List<String> {
+private fun smartPlaysFrom(context: Context, prefs: Preferences): List<Pair<Long, String>> {
     val joined = prefs[StepcastSmartPlaysWidget.P_SMARTPLAY_NAMES]
         ?: return runCatching {
             kotlinx.coroutines.runBlocking {
                 (context.applicationContext as StepcastApplication)
-                    .repository.smartPlayList().map { it.name }
+                    .repository.smartPlayList().map { it.id to it.name }
             }
         }.getOrDefault(emptyList())
-    return joined.split("\n").filter { it.isNotEmpty() }
+    return joined.split("\n").filter { it.isNotEmpty() }.map { line ->
+        val id = line.substringBefore('|', "").toLongOrNull() ?: 0L
+        val name = if (line.contains('|')) line.substringAfter('|') else line
+        id to name
+    }
 }

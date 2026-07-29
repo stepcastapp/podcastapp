@@ -376,7 +376,9 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
      */
     fun skipToNextAndDelete() {
         val c = controller ?: return
-        val episodeId = c.currentMediaItem?.mediaId?.toLongOrNull() ?: return
+        // > 0: previews play under mediaId "-1" — nothing to mark or delete
+        val episodeId = c.currentMediaItem?.mediaId?.toLongOrNull()
+            ?.takeIf { it > 0 } ?: return
         if (c.hasNextMediaItem()) {
             c.seekToNextMediaItem()
         } else {

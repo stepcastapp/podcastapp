@@ -363,6 +363,7 @@
     <string name="sleep_at_episode_end">Sleep at episode end</string>
     <string name="applies_to_every_episode_of">Applies to every episode of %1$s</string>
     <string name="listen_from_stamp">Listen from %1$s: %2$s</string>
+    <string name="listen_from_stamp_local">Listening at %1$s (local file)</string>
     <string name="share_episode">Share episode</string>
     <string name="backup_saved">Backup saved.</string>
     <string name="backup_failed">Backup failed: %1$s</string>
@@ -440,6 +441,13 @@
     <string name="follow_transcript">Follow along</string>
     <string name="this_episode_only">Just this episode</string>
     <string name="last_backup_at">Last automatic backup: %1$s</string>
+    <string name="show_more_episodes_n_of_m">Show more episodes (%1$d of %2$d)</string>
+    <string name="show_more_episodes_n_loaded">Show more episodes (%1$d loaded)</string>
+    <string name="retention_1_week">1 week</string>
+    <string name="retention_1_month">1 month</string>
+    <string name="retention_3_months">3 months</string>
+    <string name="retention_1_year">1 year</string>
+    <string name="local_folder_rescans_daily">Local folder — rescans daily</string>
     <string name="swipe_played">Played</string>
     <string name="swipe_queue">Queue</string>
     <string name="swipe_download">Download</string>

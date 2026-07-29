@@ -166,3 +166,49 @@ Still open (small):
 - M3 TimePicker swap for H:MM fields (kept text fields + validation for
   now).
 - exportSchema + migration tests (needs schema JSON generation in CI).
+
+## Fresh-eyes sweep (post-0.5.0-notes, download-notification screenshots)
+
+User-reported: ugly download notifications; "Downloaded" filter empty on
+local folders. Sweep = 2 review agents + direct pass.
+
+- [x] Download notifications: episode title as content title, determinate
+      bar from 0 (indeterminate only when no Content-Length), no
+      per-second timestamp, group summary also cleaned; stranded summary
+      cancelled at app start.
+- [x] "Downloaded" now means "available offline" everywhere: Episode
+      .isLocalFile/.isAvailableOffline; Podcast/Category filter chips,
+      SmartPlay downloaded-only rules.
+- [x] Local folders: no failing badge / bulk-download button / auto-keep
+      + max-age knobs / retention-in-schedule; correct refresh snackbar;
+      share text without content:// URI; swipe-done snackbar without
+      "download deleted"; ScheduleScreen cards inert + "rescans daily";
+      Search local results get folder glyph.
+- [x] DATA SAFETY: empty local-folder rescan (ejected SD/revoked SAF
+      grant) no longer prunes every episode row; skip + journal instead.
+- [x] Refresh failures: local folders never count failures; planner backs
+      dead feeds (3+ fails) off to hourly instead of pinning the 5-min
+      floor; refresh notification uses proper glyph + only-alert-once.
+- [x] fileFor extension parsed from last path segment (extension-less
+      URLs no longer yield "com/s" filenames = permanent failure).
+- [x] markPlayed (completion/Done paths) also removes from Up Next;
+      preview playback (mediaId -1) can no longer inflate stats or be
+      marked/deleted.
+- [x] Bulk mark-played passes playedAtMs=0 (History stays honest);
+      Inbox clear-all clears ALL (not just visible 300).
+- [x] Inbox now includes local-folder files (subscribedAt floor keeps
+      the pre-existing library out) — reversible product decision.
+- [x] SmartPlays widget rows carry the SmartPlay ID (renames don't break
+      placed widgets); app-side collector uses the full widget publisher.
+- [x] DST-safe day step in anchored refresh slots; orphan download files
+      swept at start; "Use mobile data (N)" only counts rows actually
+      blocked on metered; queue to-go shows "+" when durations unknown;
+      show-more only when more exist (N of M); Category Downloaded-empty
+      state.
+
+Surfaced, not fixed (judgment calls): Retry in Downloads ignores the
+one-shot metered override; "downloading instead" promise on stream-block
+isn't guaranteed; dismiss-undo doesn't restore auto-download eligibility;
+local-folder SmartPlay rules dropped from backups (URI not portable);
+AutoBackupWorker retries permanent failures forever; notification-id
+collision above 100k episode ids (cosmetic).

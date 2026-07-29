@@ -608,10 +608,10 @@ private fun LibraryShowRow(podcast: Podcast, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp, vertical = 6.dp)
     ) {
-        AsyncImage(
-            model = podcast.imageUrl,
+        com.stepcast.app.ui.theme.ArtworkOrFolder(
+            imageUrl = podcast.imageUrl,
+            isLocalFolder = podcast.localFolderUri != null,
             contentDescription = null,
-            contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(12.dp))

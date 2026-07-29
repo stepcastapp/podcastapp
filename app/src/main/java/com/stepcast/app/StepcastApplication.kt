@@ -1,7 +1,6 @@
 package com.stepcast.app
 
 import android.app.Application
-import androidx.glance.appwidget.updateAll
 import com.stepcast.app.data.ItunesSearch
 import com.stepcast.app.data.PodcastRepository
 import com.stepcast.app.data.StepcastDatabase
@@ -53,9 +52,13 @@ class StepcastApplication : Application(), coil.ImageLoaderFactory {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             repository.smartPlays.collect { plays ->
                 SmartPlayShortcuts.publish(this@StepcastApplication, plays)
+                // full publisher, not a bare updateAll(): widgets render from
+                // their per-widget Glance state, which only the publisher
+                // seeds — a bare poke re-composes from stale/empty state
                 runCatching {
-                    com.stepcast.app.widget.StepcastSmartPlaysWidget()
-                        .updateAll(this@StepcastApplication)
+                    com.stepcast.app.widget.updateAllStepcastWidgets(
+                        this@StepcastApplication
+                    )
                 }
             }
         }

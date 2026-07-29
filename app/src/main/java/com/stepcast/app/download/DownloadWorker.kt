@@ -99,6 +99,12 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                 // first byte is flowing: 1% moves the row from "Waiting"
                 // to "Downloading" in the downloads screen immediately
                 repository.setDownloadProgress(episodeId, 1)
+                if (total <= 0 && promoted) {
+                    // no Content-Length: indeterminate is the honest bar
+                    runCatching {
+                        updateProgressNotification(episode.title, 0, indeterminate = true)
+                    }
+                }
                 var written = 0L
                 var lastPct = -1
                 body.byteStream().use { input ->
@@ -156,7 +162,11 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
     private val notificationId: Int
         get() = (inputData.getLong(KEY_EPISODE_ID, 0) % 100_000).toInt() + 20_000
 
-    private fun buildNotification(title: String, progress: Int): android.app.Notification {
+    private fun buildNotification(
+        title: String,
+        progress: Int,
+        indeterminate: Boolean = false
+    ): android.app.Notification {
         val context = applicationContext
         val nm = context.getSystemService(android.app.NotificationManager::class.java)
         nm?.createNotificationChannel(
@@ -166,11 +176,20 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         )
         return androidx.core.app.NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(com.stepcast.app.R.drawable.ic_notification_steps)
-            .setContentTitle("Downloading")
-            .setContentText(title)
-            .setProgress(100, progress, progress <= 0)
+            // the EPISODE is the title: collapsed shade rows show only the
+            // content title, and two anonymous "Downloading" bars told the
+            // user nothing about what was coming down
+            .setContentTitle(title)
+            .setContentText("Downloading…")
+            // determinate from 0 — the bar used to start indeterminate and
+            // only turn real at the first 5% step, which rendered as a
+            // glitchy half-filled sweep in the shade
+            .setProgress(100, progress.coerceIn(0, 100), indeterminate)
             .setOngoing(true)
             .setSilent(true)
+            .setOnlyAlertOnce(true)
+            // a per-second timestamp next to a progress bar is just clutter
+            .setShowWhen(false)
             .setGroup(NOTIFICATION_GROUP)
             .build()
     }
@@ -185,6 +204,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             .setContentTitle("Downloading episodes")
             .setOngoing(true)
             .setSilent(true)
+            .setShowWhen(false)
             .setGroup(NOTIFICATION_GROUP)
             .setGroupSummary(true)
             .build()
@@ -205,9 +225,13 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
     }
 
     /** Post-promotion progress: plain notify on the id setForeground used. */
-    private fun updateProgressNotification(title: String, progress: Int) {
+    private fun updateProgressNotification(
+        title: String,
+        progress: Int,
+        indeterminate: Boolean = false
+    ) {
         applicationContext.getSystemService(android.app.NotificationManager::class.java)
-            ?.notify(notificationId, buildNotification(title, progress))
+            ?.notify(notificationId, buildNotification(title, progress, indeterminate))
     }
 
     companion object {
@@ -228,11 +252,17 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         private fun fileFor(context: Context, episode: Episode): File {
             val dir = File(context.getExternalFilesDir(null), "episodes")
             dir.mkdirs()
+            // extension from the LAST PATH SEGMENT only — substringAfterLast('.')
+            // on the whole URL turns an extension-less enclosure
+            // (…example.com/stream) into "com/stream" and the '/' makes the
+            // file unopenable, permanently failing the download
             val ext = episode.audioUrl
-                .substringBefore('?')
-                .substringAfterLast('.', "mp3")
+                .substringBefore('?').substringBefore('#')
+                .substringAfterLast('/')
+                .substringAfterLast('.', "")
                 .take(5)
-                .ifEmpty { "mp3" }
+                .takeIf { it.isNotEmpty() && it.all { c -> c.isLetterOrDigit() } }
+                ?: "mp3"
             return File(dir, "episode-${episode.id}.$ext")
         }
 
@@ -278,10 +308,31 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         suspend fun reconcileOrphans(context: Context) {
             val app = context.applicationContext as StepcastApplication
             val workManager = WorkManager.getInstance(context)
+            // a force-stop mid-download can strand the "Downloading episodes"
+            // group summary forever (downloadsShowing restarts at 0, so the
+            // last-worker cancel never fires); any live download after this
+            // restart re-posts it
+            runCatching {
+                context.getSystemService(android.app.NotificationManager::class.java)
+                    ?.cancel(SUMMARY_NOTIFICATION_ID)
+            }
             for (id in app.repository.downloadingIds()) {
                 val infos = workManager.getWorkInfosForUniqueWork(workName(id)).await()
                 if (infos.none { !it.state.isFinished }) {
                     app.repository.setDownloadStatus(id, Episode.DOWNLOAD_FAILED)
+                }
+            }
+            // sweep audio files whose episode ROW is gone (deleted feed,
+            // pruned episode): nothing references them, they just eat storage
+            runCatching {
+                val dir = File(context.getExternalFilesDir(null), "episodes")
+                for (f in dir.listFiles().orEmpty()) {
+                    if (!f.isFile || !f.name.startsWith("episode-")) continue
+                    val id = f.name
+                        .removePrefix("episode-")
+                        .substringBefore('.')
+                        .toLongOrNull() ?: continue
+                    if (app.repository.episode(id) == null) f.delete()
                 }
             }
         }

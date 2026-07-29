@@ -167,7 +167,11 @@ fun QueueScreen(
         }
         if (queue.isNotEmpty()) {
             val remainMs = queue.sumOf { (it.durationMs - it.positionMs).coerceAtLeast(0L) }
+            // unknown durations contribute 0 — a confident "41m to go" over
+            // a queue that's half unmeasured is a lie; mark it a floor
+            val anyUnknown = queue.any { it.durationMs <= 0 }
             val remainLabel = Formatters.duration(remainMs)
+                .let { if (it.isNotEmpty() && anyUnknown) "$it+" else it }
             val countLabel = pluralStringResource(
                 R.plurals.episodes_count, queue.size, queue.size
             )

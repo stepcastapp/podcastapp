@@ -177,8 +177,12 @@ class PodcastRepository(
         }
     }
 
-    suspend fun recordRefreshFailure(podcastId: Long) =
+    suspend fun recordRefreshFailure(podcastId: Long) {
+        // local folders have no feed to "fail" — a transient SAF hiccup
+        // must not badge them or offer the feed-replacement repair
+        if (db.podcastDao().get(podcastId)?.localFolderUri != null) return
         db.podcastDao().incrementFailures(podcastId)
+    }
 
     fun episodesForPaged(podcastId: Long, oldestFirst: Boolean, limit: Int) =
         db.episodeDao().observeForPodcastPaged(podcastId, if (oldestFirst) 1 else 0, limit)
@@ -189,7 +193,9 @@ class PodcastRepository(
     /** Bulk cleanup: everything older than [days] becomes played. */
     suspend fun markPlayedOlderThan(podcastId: Long, days: Int) {
         val cutoff = System.currentTimeMillis() - days * 86_400_000L
-        db.episodeDao().markPlayedOlderThan(podcastId, cutoff, System.currentTimeMillis())
+        // playedAtMs = 0: bulk cleanups must not flood History (which
+        // filters playedAtMs > 0) and evict what the user actually heard
+        db.episodeDao().markPlayedOlderThan(podcastId, cutoff, 0L)
         // scoped: cleaning one show must not clear other shows' played
         // episodes the user deliberately left in Up Next
         db.queueDao().removePlayedForPodcast(podcastId)
@@ -198,9 +204,7 @@ class PodcastRepository(
 
     suspend fun markPlayedOlderThanInCategory(category: String, days: Int) {
         val cutoff = System.currentTimeMillis() - days * 86_400_000L
-        db.episodeDao().markPlayedOlderThanInFolder(
-            category, cutoff, System.currentTimeMillis()
-        )
+        db.episodeDao().markPlayedOlderThanInFolder(category, cutoff, 0L)
         db.queueDao().removePlayedForFolder(category)
         PlaybackJournal.log("bulk", "olderThan folder=$category days=$days")
     }
@@ -425,13 +429,26 @@ class PodcastRepository(
             }
         }
 
-        // prune episodes whose backing file is gone (and their cached art)
-        val validGuids = found.mapTo(HashSet()) { it.guid }
-        for (episode in db.episodeDao().listForPodcast(podcast.id)) {
-            if (episode.guid !in validGuids) {
-                db.queueDao().remove(episode.id)
-                db.episodeDao().deleteById(episode.id)
-                java.io.File(artDir, "${episode.id}.jpg").delete()
+        // prune episodes whose backing file is gone (and their cached art) —
+        // but an EMPTY scan of a folder that used to have episodes almost
+        // always means the storage/SAF grant was momentarily unreadable
+        // (ejected SD card, revoked permission, slow mount at boot), not
+        // that the user deleted every file. Wiping the rows would destroy
+        // all positions/played flags; skip the prune and let a later scan
+        // that can actually see files do it.
+        val existing = db.episodeDao().listForPodcast(podcast.id)
+        if (found.isEmpty() && existing.isNotEmpty()) {
+            PlaybackJournal.log(
+                "scan-empty", "pod=${podcast.id} kept=${existing.size} prune skipped"
+            )
+        } else {
+            val validGuids = found.mapTo(HashSet()) { it.guid }
+            for (episode in existing) {
+                if (episode.guid !in validGuids) {
+                    db.queueDao().remove(episode.id)
+                    db.episodeDao().deleteById(episode.id)
+                    java.io.File(artDir, "${episode.id}.jpg").delete()
+                }
             }
         }
         // narrow write: the SAF walk above can take a while, and a stale
@@ -965,7 +982,7 @@ class PodcastRepository(
 
     suspend fun markAllPlayed(podcastId: Long) {
         db.queueDao().removeForPodcast(podcastId)
-        db.episodeDao().markAllPlayed(podcastId, System.currentTimeMillis())
+        db.episodeDao().markAllPlayed(podcastId, 0L) // 0: keep History honest
     }
 
     /** Recently finished episodes, newest first. */
@@ -1109,6 +1126,9 @@ class PodcastRepository(
     suspend fun markPlayed(episodeId: Long, source: String = "ui") {
         val wasPlayed = db.episodeDao().get(episodeId)?.played ?: false
         db.episodeDao().setPlayed(episodeId, true, System.currentTimeMillis())
+        // finished episodes leave Up Next, same as setPlayed — a completed
+        // episode lingering in the queue replays from the top on next start
+        db.queueDao().remove(episodeId)
         if (!wasPlayed) ListenStats.addFinishedEpisode(appContext)
         PlaybackJournal.log("played", "$source ep=$episodeId")
     }
@@ -1239,6 +1259,9 @@ class PodcastRepository(
     private fun inboxSinceMs() = System.currentTimeMillis() - INBOX_WINDOW_MS
 
     fun inbox() = db.episodeDao().observeInbox(inboxSinceMs())
+
+    /** ALL inbox ids, not just the 300 the list shows — Clear-all uses this. */
+    suspend fun inboxAllIds(): List<Long> = db.episodeDao().inboxIds(inboxSinceMs())
 
     fun inboxCount() = db.episodeDao().observeInboxCount(inboxSinceMs())
 

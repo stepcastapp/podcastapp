@@ -138,7 +138,11 @@ suspend fun performSwipeAction(
             repository.markPlayed(episode.id)
             repository.deleteDownload(episode.id)
             val result = snackbar.showSnackbar(
-                message = context.getString(R.string.done_played_download_deleted),
+                // local files have no download to delete — say what happened
+                message = context.getString(
+                    if (episode.isLocalFile) R.string.mark_played
+                    else R.string.done_played_download_deleted
+                ),
                 actionLabel = context.getString(R.string.undo),
                 withDismissAction = true
             )

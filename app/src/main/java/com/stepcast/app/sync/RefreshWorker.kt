@@ -144,7 +144,7 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
             } else {
                 expectedReleaseFor(app, podcast)
             }
-            ScheduleEngine.nextCheck(
+            val candidate = ScheduleEngine.nextCheck(
                 mode = podcast.scheduleMode,
                 param = podcast.scheduleParam,
                 lastRefreshedMs = podcast.lastRefreshed,
@@ -152,6 +152,15 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
                 nowMs = now,
                 cfg = cfg
             )?.timeMs
+            // a feed that keeps failing never advances lastRefreshed, so its
+            // stale "overdue" candidate would pin the planner to the 5-minute
+            // floor forever — a hammering retry loop against a dead URL.
+            // Back it off to hourly until a refresh succeeds.
+            if (candidate != null && podcast.consecutiveFailures >= 3) {
+                candidate.coerceAtLeast(now + 3_600_000L)
+            } else {
+                candidate
+            }
         }.minOrNull() ?: return
         val delayMs = (next - now).coerceIn(5 * 60_000L, 6 * 3_600_000L)
         val request = OneTimeWorkRequestBuilder<RefreshWorker>()
@@ -222,11 +231,16 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            // the proper monochrome status-bar glyph — the adaptive launcher
+            // foreground renders as an oversized blob in the status bar
+            .setSmallIcon(R.drawable.ic_notification_steps)
             .setContentTitle(if (count == 1) "1 new episode" else "$count new episodes")
             .setContentText(podcasts.distinct().joinToString(", "))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
+            // re-posts on the same id (several checkpoints in a day) update
+            // the text without buzzing again
+            .setOnlyAlertOnce(true)
             .build()
         nm.notify(NOTIFICATION_ID, notification)
     }

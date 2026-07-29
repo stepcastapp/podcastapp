@@ -156,17 +156,19 @@ suspend fun updateAllStepcastWidgets(context: Context) {
     // the SmartPlays widget reads its list from Glance state for the same
     // reason (see the session-lifetime note above) — seed every placed
     // instance with the current names before poking it
-    val smartPlayNames = runCatching {
+    // "id|name" lines: the id survives a RENAME — a tap on a stale widget
+    // still starts the right SmartPlay instead of "not found"
+    val smartPlayLines = runCatching {
         (context.applicationContext as com.stepcast.app.StepcastApplication)
-            .repository.smartPlayList().map { it.name }
+            .repository.smartPlayList().map { "${it.id}|${it.name}" }
     }.getOrNull()
     val smartPlaysWidget = StepcastSmartPlaysWidget()
     for (id in manager.getGlanceIds(StepcastSmartPlaysWidget::class.java)) {
         runCatching {
-            if (smartPlayNames != null) {
+            if (smartPlayLines != null) {
                 updateAppWidgetState(context, id) { prefs ->
                     prefs[StepcastSmartPlaysWidget.P_SMARTPLAY_NAMES] =
-                        smartPlayNames.joinToString("\n")
+                        smartPlayLines.joinToString("\n")
                 }
             }
             smartPlaysWidget.update(context, id)

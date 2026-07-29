@@ -186,9 +186,12 @@ fun SmartPlayEditorScreen(
                         Text(
                             entryRuleLabel(entry) +
                                 (matches?.let {
-                                    " · " + androidx.compose.ui.res.pluralStringResource(
+                                    val shown = androidx.compose.ui.res.pluralStringResource(
                                         R.plurals.n_matches_now, it, it
                                     )
+                                    // the count query is windowed at 500 —
+                                    // present the cap as a floor, not a fact
+                                    " · " + if (it >= 500) "$shown+" else shown
                                 } ?: "") + explain,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (matches == 0) {

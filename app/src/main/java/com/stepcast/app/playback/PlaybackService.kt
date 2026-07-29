@@ -177,7 +177,10 @@ class PlaybackService : MediaLibraryService() {
                     // first auto-advance
                     val sleepStop = sleepAtEpisodeEnd
                     sleepAtEpisodeEnd = false
-                    currentEpisodeId()?.let { id ->
+                    // id > 0: an episode PREVIEW plays under mediaId "-1" —
+                    // no row to mark, and counting it as a finished episode
+                    // inflated the listening stats
+                    currentEpisodeId()?.takeIf { it > 0 }?.let { id ->
                         serviceScope.launch {
                             withContext(Dispatchers.IO) {
                                 app.repository.markPlayed(id, "ended")
@@ -371,7 +374,9 @@ class PlaybackService : MediaLibraryService() {
     /** Marks the current episode played, deletes its download, moves on. */
     private fun doneAndDeleteCurrent() {
         val player = mediaSession?.player ?: return
-        val episodeId = player.currentMediaItem?.mediaId?.toLongOrNull() ?: return
+        // > 0: previews play under mediaId "-1" — nothing to mark or delete
+        val episodeId = player.currentMediaItem?.mediaId?.toLongOrNull()
+            ?.takeIf { it > 0 } ?: return
         if (player.hasNextMediaItem()) {
             player.seekToNextMediaItem()
         } else {
@@ -1078,7 +1083,7 @@ class PlaybackService : MediaLibraryService() {
         val previousId = activeEpisodeId
         activeEpisodeId = episodeId
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
-            previousId != null && previousId != episodeId
+            previousId != null && previousId > 0 && previousId != episodeId
         ) {
             app.repository.markPlayed(previousId, "auto-adv")
             if (sleepAtEpisodeEnd) {

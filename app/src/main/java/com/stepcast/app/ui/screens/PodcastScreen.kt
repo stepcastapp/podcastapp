@@ -84,7 +84,10 @@ fun PodcastScreen(
     val counts by remember(podcastId) { repository.episodeCounts(podcastId) }
         .collectAsState(initial = null)
     var downloadedOnly by rememberSaveable { mutableStateOf(false) }
-    val shownEpisodes = if (downloadedOnly) episodes.filter { it.isDownloaded } else episodes
+    // isAvailableOffline, not isDownloaded: a local folder's episodes are
+    // already on-device — the chip used to filter ALL of them out
+    val shownEpisodes =
+        if (downloadedOnly) episodes.filter { it.isAvailableOffline } else episodes
     val allPodcasts by repository.podcasts.collectAsState(initial = emptyList())
     val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
     val categories = categoryMetas.map { it.name }
@@ -171,7 +174,9 @@ fun PodcastScreen(
                             modifier = Modifier.padding(top = 2.dp)
                         )
                         val fails = podcast?.consecutiveFailures ?: 0
-                        if (fails >= 3) {
+                        // never on local folders: no feed to fail, and the
+                        // "replacement feed" repair would corrupt the row
+                        if (fails >= 3 && podcast?.localFolderUri == null) {
                             Text(
                                 stringResource(R.string.refresh_failing_warning, fails),
                                 style = MaterialTheme.typography.labelMedium,
@@ -209,16 +214,26 @@ fun PodcastScreen(
                             // refresh() also runs the auto-download rules
                             val added = runCatching { repository.refresh(podcastId) }
                                 .getOrDefault(0)
+                            val isFolder = podcast?.localFolderUri != null
                             snackbar.showSnackbar(
-                                if (added > 0) {
-                                    context.resources.getQuantityString(
-                                        R.plurals.new_episodes_rules_applied,
-                                        added, added
-                                    )
-                                } else {
-                                    context.getString(
-                                        R.string.no_new_episodes_rules_applied
-                                    )
+                                when {
+                                    added > 0 && isFolder ->
+                                        context.resources.getQuantityString(
+                                            R.plurals.new_episodes_count, added, added
+                                        )
+                                    added > 0 ->
+                                        context.resources.getQuantityString(
+                                            R.plurals.new_episodes_rules_applied,
+                                            added, added
+                                        )
+                                    // folders don't run download rules —
+                                    // don't claim they did
+                                    isFolder ->
+                                        context.getString(R.string.no_new_episodes)
+                                    else ->
+                                        context.getString(
+                                            R.string.no_new_episodes_rules_applied
+                                        )
                                 }
                             )
                         }
@@ -273,16 +288,20 @@ fun PodcastScreen(
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = {
-                        val targets = episodes.filter {
-                            it.id in selectedEpisodes &&
-                                !it.isDownloaded && !it.isDownloading &&
-                                !it.audioUrl.startsWith("content:")
+                    // a local folder has nothing to download — the icon
+                    // was a permanent silent no-op there
+                    if (podcast?.localFolderUri == null) {
+                        IconButton(onClick = {
+                            val targets = episodes.filter {
+                                it.id in selectedEpisodes &&
+                                    !it.isDownloaded && !it.isDownloading &&
+                                    !it.isLocalFile
+                            }
+                            targets.forEach { DownloadWorker.start(context, it.id) }
+                            selectedEpisodes.clear()
+                        }) {
+                            Icon(Icons.Rounded.Download, contentDescription = stringResource(R.string.download_selected))
                         }
-                        targets.forEach { DownloadWorker.start(context, it.id) }
-                        selectedEpisodes.clear()
-                    }) {
-                        Icon(Icons.Rounded.Download, contentDescription = stringResource(R.string.download_selected))
                     }
                     IconButton(onClick = {
                         val ids = selectedEpisodes.toList()
@@ -384,8 +403,12 @@ fun PodcastScreen(
                         }
                     )
                 }
-                val moreExist = shownEpisodes.size >= episodeLimit &&
-                    (counts?.total ?: Int.MAX_VALUE) > shownEpisodes.size
+                // gate on the UNFILTERED page: with the Downloaded chip on,
+                // the filtered count never reaches the limit and the button
+                // vanished — making downloads beyond the first page
+                // unreachable
+                val moreExist = episodes.size >= episodeLimit &&
+                    (counts?.total ?: Int.MAX_VALUE) > episodes.size
                 if (moreExist) {
                     item(key = "load-more") {
                         TextButton(
@@ -396,10 +419,16 @@ fun PodcastScreen(
                         ) {
                             val total = counts?.total
                             Text(
-                                if (total != null && total > shownEpisodes.size) {
-                                    "Show more episodes (${shownEpisodes.size} of $total)"
+                                if (total != null && total > episodes.size) {
+                                    stringResource(
+                                        R.string.show_more_episodes_n_of_m,
+                                        episodes.size, total
+                                    )
                                 } else {
-                                    "Show more episodes (${shownEpisodes.size} loaded)"
+                                    stringResource(
+                                        R.string.show_more_episodes_n_loaded,
+                                        episodes.size
+                                    )
                                 }
                             )
                         }
@@ -427,6 +456,7 @@ fun PodcastScreen(
             episodeCap = podcast!!.episodeCap,
             sortOldestFirst = podcast!!.sortOldestFirst,
             autoQueue = podcast!!.autoQueue,
+            isLocalFolder = podcast!!.localFolderUri != null,
             onDismiss = { settingsDialogOpen = false },
             onSave = { result ->
                 settingsDialogOpen = false
@@ -482,15 +512,22 @@ fun PodcastScreen(
             title = { Text(stringResource(R.string.mark_played_when_older_than_2)) },
             text = {
                 Column {
-                    for ((label, days) in listOf(
-                        "1 week" to 7, "1 month" to 30,
-                        "3 months" to 90, "1 year" to 365
+                    for ((labelRes, days) in listOf(
+                        R.string.retention_1_week to 7,
+                        R.string.retention_1_month to 30,
+                        R.string.retention_3_months to 90,
+                        R.string.retention_1_year to 365
                     )) {
+                        val label = stringResource(labelRes)
                         TextButton(onClick = {
                             olderThanOpen = false
                             scope.launch {
                                 repository.markPlayedOlderThan(podcastId, days)
-                                snackbar.showSnackbar("Episodes older than $label marked played")
+                                snackbar.showSnackbar(
+                                    context.getString(
+                                        R.string.episodes_older_marked_played, label
+                                    )
+                                )
                             }
                         }) { Text(label) }
                     }
@@ -577,6 +614,7 @@ private fun PodcastSettingsDialog(
     episodeCap: Int,
     sortOldestFirst: Boolean,
     autoQueue: Boolean,
+    isLocalFolder: Boolean,
     onDismiss: () -> Unit,
     onSave: (PodcastSettingsResult) -> Unit
 ) {
@@ -685,24 +723,29 @@ private fun PodcastSettingsDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.size(12.dp))
-                Text(stringResource(R.string.downloads), style = MaterialTheme.typography.labelMedium)
-                Row {
-                    OutlinedTextField(
-                        value = keepText,
-                        onValueChange = { keepText = it.filter(Char::isDigit).take(2) },
-                        label = { Text(stringResource(R.string.auto_keep_0_off)) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    OutlinedTextField(
-                        value = ageText,
-                        onValueChange = { ageText = it.filter(Char::isDigit).take(4) },
-                        label = { Text(stringResource(R.string.max_age_days)) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
+                // local folders have no download machinery — auto-keep and
+                // max-age would be dead knobs promising deletions that never
+                // happen (the files aren't ours to delete)
+                if (!isLocalFolder) {
+                    Spacer(Modifier.size(12.dp))
+                    Text(stringResource(R.string.downloads), style = MaterialTheme.typography.labelMedium)
+                    Row {
+                        OutlinedTextField(
+                            value = keepText,
+                            onValueChange = { keepText = it.filter(Char::isDigit).take(2) },
+                            label = { Text(stringResource(R.string.auto_keep_0_off)) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        OutlinedTextField(
+                            value = ageText,
+                            onValueChange = { ageText = it.filter(Char::isDigit).take(4) },
+                            label = { Text(stringResource(R.string.max_age_days)) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
                 Spacer(Modifier.size(12.dp))
                 Text(stringResource(R.string.episode_list), style = MaterialTheme.typography.labelMedium)

@@ -298,7 +298,14 @@ fun ScheduleScreen(
 
             item { ScheduleHeader(stringResource(R.string.schedule_show_rules)) }
             items(sortedPods, key = { it.id }) { podcast ->
-                ScheduleCard(onClick = { ruleFor = podcast }) {
+                val isFolder = podcast.localFolderUri != null
+                // local folders: no rule dialog — the worker rescans them at
+                // most daily regardless, so offering Hourly/Manual was a
+                // promise the app never kept. No retention line either
+                // (auto-download rules skip folders entirely).
+                ScheduleCard(
+                    onClick = if (isFolder) ({}) else ({ ruleFor = podcast })
+                ) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             podcast.title,
@@ -307,18 +314,24 @@ fun ScheduleScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            ruleText(podcast) + "  ·  " +
-                                patternText(patterns[podcast.id]),
+                            if (isFolder) {
+                                stringResource(R.string.local_folder_rescans_daily)
+                            } else {
+                                ruleText(podcast) + "  ·  " +
+                                    patternText(patterns[podcast.id])
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Text(
-                            retentionText(podcast),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (!isFolder) {
+                            Text(
+                                retentionText(podcast),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

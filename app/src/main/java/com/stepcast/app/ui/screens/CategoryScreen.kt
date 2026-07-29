@@ -86,7 +86,9 @@ fun CategoryScreen(
     var removeConfirmOpen by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var downloadedOnly by remember { mutableStateOf(false) }
-    val shownEpisodes = if (downloadedOnly) episodes.filter { it.isDownloaded } else episodes
+    // isAvailableOffline: local-folder members are on-device already
+    val shownEpisodes =
+        if (downloadedOnly) episodes.filter { it.isAvailableOffline } else episodes
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -181,6 +183,21 @@ fun CategoryScreen(
             }
 
             LazyColumn(Modifier.fillMaxSize()) {
+                // a silently blank list after tapping Downloaded reads as a
+                // bug — say what the filter found
+                if (downloadedOnly && shownEpisodes.isEmpty()) {
+                    item {
+                        Text(
+                            stringResource(R.string.no_downloaded_episodes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp)
+                        )
+                    }
+                }
                 items(shownEpisodes, key = { it.id }) { episode ->
                     val podcast = byId[episode.podcastId]
                     EpisodeRow(

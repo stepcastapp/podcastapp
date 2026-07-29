@@ -55,10 +55,13 @@ interface PodcastDao {
         lastRefreshed: Long
     )
 
-    /** Local-folder rescan bookkeeping — same narrow-write rule as above. */
+    /** Local-folder rescan bookkeeping — same narrow-write rule as above.
+     *  A successful scan also clears any failure count a revoked-then-
+     *  restored SAF grant left behind (nothing else ever reset it). */
     @Query(
         "UPDATE podcasts SET lastRefreshed = :lastRefreshed, " +
-            "imageUrl = COALESCE(imageUrl, :fallbackArt) WHERE id = :id"
+            "imageUrl = COALESCE(imageUrl, :fallbackArt), " +
+            "consecutiveFailures = 0 WHERE id = :id"
     )
     suspend fun updateLocalScan(id: Long, lastRefreshed: Long, fallbackArt: String?)
 
@@ -157,7 +160,10 @@ interface EpisodeDao {
             "WHERE pc.podcastId = e.podcastId AND pc.category = :folder)) " +
             "AND (:podcastId IS NULL OR e.podcastId = :podcastId) " +
             "AND (e.played = 0 OR :includePlayed = 1) " +
-            "AND (e.downloadStatus = 2 OR :downloadedOnly = 0) " +
+            // content:// = local-folder file: already on-device, so a
+            // downloaded-only rule must include it
+            "AND (e.downloadStatus = 2 OR e.audioUrl LIKE 'content:%' " +
+            "OR :downloadedOnly = 0) " +
             "ORDER BY CASE WHEN :oldestFirst = 1 THEN e.pubDateMs END ASC, " +
             "CASE WHEN :oldestFirst = 0 THEN e.pubDateMs END DESC LIMIT 500"
     )
@@ -175,23 +181,32 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes ORDER BY pubDateMs DESC LIMIT :limit")
     fun observeRecent(limit: Int = 100): Flow<List<Episode>>
 
-    // ---- inbox: recent, unplayed, not swiped away, not local files -------
+    // ---- inbox: recent, unplayed, not swiped away ------------------------
     // Floor per show = MAX(window, when the user subscribed): subscribing
     // to a daily show must not dump two weeks of back catalog into "New".
+    // Local-folder files count as new too (pubDate = file mtime), so a file
+    // dropped into a synced folder surfaces like any other new episode —
+    // the subscribedAt floor keeps the pre-existing library out.
     @Query(
         "SELECT * FROM episodes WHERE played = 0 AND inboxDismissed = 0 " +
             "AND pubDateMs >= MAX(:sinceMs, COALESCE((SELECT p.subscribedAt " +
             "FROM podcasts p WHERE p.id = episodes.podcastId), 0)) " +
-            "AND audioUrl NOT LIKE 'content:%' " +
             "ORDER BY pubDateMs DESC LIMIT 300"
     )
     fun observeInbox(sinceMs: Long): Flow<List<Episode>>
 
+    /** EVERY inbox id (no display limit) — Clear-all must clear ALL. */
+    @Query(
+        "SELECT id FROM episodes WHERE played = 0 AND inboxDismissed = 0 " +
+            "AND pubDateMs >= MAX(:sinceMs, COALESCE((SELECT p.subscribedAt " +
+            "FROM podcasts p WHERE p.id = episodes.podcastId), 0))"
+    )
+    suspend fun inboxIds(sinceMs: Long): List<Long>
+
     @Query(
         "SELECT COUNT(*) FROM episodes WHERE played = 0 AND inboxDismissed = 0 " +
             "AND pubDateMs >= MAX(:sinceMs, COALESCE((SELECT p.subscribedAt " +
-            "FROM podcasts p WHERE p.id = episodes.podcastId), 0)) " +
-            "AND audioUrl NOT LIKE 'content:%'"
+            "FROM podcasts p WHERE p.id = episodes.podcastId), 0))"
     )
     fun observeInboxCount(sinceMs: Long): Flow<Int>
 

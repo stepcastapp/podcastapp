@@ -109,6 +109,13 @@ data class Episode(
     val isDownloaded: Boolean get() = downloadStatus == DOWNLOAD_DONE && localFilePath != null
     val isDownloading: Boolean get() = downloadStatus == DOWNLOAD_RUNNING
 
+    /** Local-folder episodes are content:// files — no download machinery,
+     *  but they ARE on-device. Anything meaning "playable without network"
+     *  (the Downloaded filter, downloaded-only SmartPlay rules) wants THIS,
+     *  not [isDownloaded]. */
+    val isLocalFile: Boolean get() = audioUrl.startsWith("content:")
+    val isAvailableOffline: Boolean get() = isDownloaded || isLocalFile
+
     companion object {
         const val DOWNLOAD_NONE = 0
         const val DOWNLOAD_RUNNING = 1

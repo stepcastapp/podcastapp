@@ -586,10 +586,19 @@ fun FullPlayerSheet(
                             val text = buildString {
                                 append("“${ep.title}”")
                                 podcast?.let { append(" — ${it.title}") }
+                                // a content:// SAF uri is meaningless (and
+                                // permission-dead) outside this device —
+                                // share the moment, not the "link"
                                 append(
-                                    "\n" + context.getString(
-                                        R.string.listen_from_stamp, stamp, ep.audioUrl
-                                    )
+                                    "\n" + if (ep.isLocalFile) {
+                                        context.getString(
+                                            R.string.listen_from_stamp_local, stamp
+                                        )
+                                    } else {
+                                        context.getString(
+                                            R.string.listen_from_stamp, stamp, ep.audioUrl
+                                        )
+                                    }
                                 )
                             }
                             val send = android.content.Intent(

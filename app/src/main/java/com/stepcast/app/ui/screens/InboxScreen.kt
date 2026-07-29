@@ -78,8 +78,11 @@ fun InboxScreen(
                 }
                 if (episodes.isNotEmpty()) {
                     TextButton(onClick = {
-                        val ids = episodes.map { it.id }
                         scope.launch {
+                            // EVERY inbox id — the list itself is capped at
+                            // 300, and clearing only the visible page made
+                            // the screen refill instead of emptying
+                            val ids = repository.inboxAllIds()
                             repository.dismissFromInbox(ids)
                             val result = snackbar.showSnackbar(
                                 message = context.resources.getQuantityString(
