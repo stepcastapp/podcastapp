@@ -900,18 +900,13 @@ fun SettingsScreen(
                 label = stringResource(R.string.share_last_crash_report),
                 hint = stringResource(R.string.stack_trace_from_the_most_recent_crash),
                 onClick = {
-                    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
-                        .setType("text/plain")
-                        .putExtra(
-                            android.content.Intent.EXTRA_TEXT,
-                            runCatching { crashFile.readText() }.getOrDefault(
-                                context.getString(R.string.couldnt_read_crash_file)
-                            )
-                        )
-                    context.startActivity(
-                        android.content.Intent.createChooser(
-                            send, context.getString(R.string.crash_report)
-                        )
+                    shareDiagnosticFile(
+                        context,
+                        fileName = "stepcast-crash.txt",
+                        text = runCatching { crashFile.readText() }.getOrDefault(
+                            context.getString(R.string.couldnt_read_crash_file)
+                        ),
+                        title = context.getString(R.string.crash_report)
                     )
                 }
             )
@@ -1020,18 +1015,13 @@ fun SettingsScreen(
                 // positions and when — the evidence for "it started over"
                 TextButton(onClick = {
                     val journal = com.stepcast.app.data.PlaybackJournal.snapshot()
-                    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
-                        .setType("text/plain")
-                        .putExtra(
-                            android.content.Intent.EXTRA_TEXT,
-                            journal.ifEmpty {
-                                context.getString(R.string.journal_empty)
-                            }
-                        )
-                    context.startActivity(
-                        android.content.Intent.createChooser(
-                            send, context.getString(R.string.share_playback_journal)
-                        )
+                    shareDiagnosticFile(
+                        context,
+                        fileName = "stepcast-journal.txt",
+                        text = journal.ifEmpty {
+                            context.getString(R.string.journal_empty)
+                        },
+                        title = context.getString(R.string.share_playback_journal)
                     )
                 }) {
                     Text(stringResource(R.string.share_playback_journal))
@@ -1368,5 +1358,44 @@ private fun SwitchSetting(
             Spacer(Modifier.width(12.dp))
             Switch(checked = checked, onCheckedChange = onToggle)
         }
+    }
+}
+
+/**
+ * Shares diagnostic text as a FILE (content:// via FileProvider), not as
+ * EXTRA_TEXT: the journal snapshot can be a few hundred KB, and an intent
+ * that big trips the binder transaction limit — on One UI the chooser then
+ * silently never appears, which reads as "the button does nothing".
+ */
+private fun shareDiagnosticFile(
+    context: android.content.Context,
+    fileName: String,
+    text: String,
+    title: String
+) {
+    runCatching {
+        val dir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
+        val file = java.io.File(dir, fileName)
+        file.writeText(text)
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, context.packageName + ".fileprovider", file
+        )
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // some share targets only honor the grant through clipData
+        send.clipData = android.content.ClipData.newRawUri(fileName, uri)
+        context.startActivity(
+            android.content.Intent.createChooser(send, title)
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        )
+    }.onFailure {
+        // a share that fails must SAY so — a silent no-op is undebuggable
+        android.widget.Toast.makeText(
+            context,
+            "Share failed: ${it.message ?: it.javaClass.simpleName}",
+            android.widget.Toast.LENGTH_LONG
+        ).show()
     }
 }

@@ -174,5 +174,18 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
+        <!-- shares diagnostic files (journal, crash log) as content:// URIs;
+             big text can't ride inside a share intent (binder size limit —
+             the chooser silently never appears) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 </manifest>

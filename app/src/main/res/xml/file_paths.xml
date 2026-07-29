@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- diagnostics staged for sharing (journal snapshot, crash log) -->
+    <cache-path name="share" path="share/" />
+</paths>
