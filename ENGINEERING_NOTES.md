@@ -64,6 +64,16 @@ build or one confused on-device session.
   a misrouted key is a no-op in an already-playing app instead of
   pausing it. SmartPlay starts have no media-key equivalent and stay on
   the trampoline (they may prompt for unlock from the lock screen).
+- **The media key routes globally — target the play when the session is
+  alive.** The system delivers a dispatched media key to the MOST RECENT
+  media session, and after watching a video elsewhere that isn't ours: a
+  widget play tap resumed the other app's paused media (field report).
+  `resumeStepcastPlayback` therefore plays through the bound controller
+  whenever our session has a current item (targeted, and the service is
+  still started so no fresh FGS grant is needed), and falls back to the
+  media key ONLY for a dead session, where global routing is the price
+  of the resumption revival. The 1.5s reconcile + journal line
+  ("play via controller" vs "dispatch PLAY") records which path ran.
 - **Responsive shrinking.** `SizeMode.Responsive` breakpoints keep the
   play/pause button alive as the bar widget shrinks (text drops <200dp,
   art drops <110dp); `minResizeWidth=40dp` allows 1-cell. Launchers cache

@@ -105,13 +105,13 @@ class CommandReceiver : BroadcastReceiver() {
                     SessionCommand(PlaybackService.ACTION_REFRESH_NOTIF_BUTTONS, Bundle.EMPTY),
                     Bundle.EMPTY
                 )
-                // starting playback from a background broadcast hits the
-                // Android 12+ FGS wall (Media3 swallows the denial into a
-                // pause) — ride the system media-key pipeline instead, the
-                // same fix the widgets use. Pause never needs FGS.
+                // resumeStepcastPlayback: targeted play through the bound
+                // controller when our session is alive (a global media key
+                // resumes whichever app played most recently), media-key
+                // revival only when it's dead. Pause never needs FGS.
                 ACTION_PLAY -> {
                     if (!controller.isPlaying) {
-                        com.stepcast.app.widget.dispatchPlayMediaKey(context)
+                        com.stepcast.app.widget.resumeStepcastPlayback(context, controller)
                     }
                     null
                 }
@@ -120,7 +120,7 @@ class CommandReceiver : BroadcastReceiver() {
                     if (controller.isPlaying) {
                         controller.pause()
                     } else {
-                        com.stepcast.app.widget.dispatchPlayMediaKey(context)
+                        com.stepcast.app.widget.resumeStepcastPlayback(context, controller)
                     }
                     null
                 }

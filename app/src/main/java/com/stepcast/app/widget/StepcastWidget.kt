@@ -687,7 +687,7 @@ class PlayPauseAction : ActionCallback {
                 controller.pause()
             } else {
                 startedPlay = true
-                dispatchPlayMediaKey(context)
+                resumeStepcastPlayback(context, controller)
             }
         }
         // flip the glyph immediately from this side of the tap — the
@@ -718,13 +718,34 @@ class PlayPauseAction : ActionCallback {
 }
 
 /**
+ * Starts playback targeted at STEPCAST. When our session is alive with an
+ * episode loaded, resume it through the bound controller — the global
+ * media-key route delivers to the MOST RECENT media session, and after
+ * playing anything in another app that isn't ours (a widget play tap was
+ * resuming the other app's paused media). The media key remains only for
+ * a dead session, where the controller has nothing to resume and the
+ * system pipeline — with its FGS exemption and playback-resumption
+ * revival — is the one way back to life.
+ */
+internal fun resumeStepcastPlayback(context: Context, controller: MediaController) {
+    if (controller.currentMediaItem != null) {
+        com.stepcast.app.data.PlaybackJournal.log(
+            "widget", "play via controller (session alive)"
+        )
+        controller.play()
+    } else {
+        dispatchPlayMediaKey(context)
+    }
+}
+
+/**
  * Starts playback by injecting KEYCODE_MEDIA_PLAY into the system media-key
- * pipeline. The system delivers it to the most recent media session (ours,
- * alive-and-paused, in every widget scenario — the widget shows our
- * episode) WITH the temporary foreground-service allowance, or to the
- * playback-resumption receiver after process death. Plain PLAY, not
- * PLAY_PAUSE: if another app somehow holds media-key priority while
- * playing, PLAY is a no-op there instead of pausing it.
+ * pipeline: the FGS-exempt route that revives a DEAD session via playback
+ * resumption. Global routing is the trade-off — the system delivers it to
+ * the most recent media session, not necessarily ours — so callers with a
+ * live session must use [resumeStepcastPlayback] instead. Plain PLAY, not
+ * PLAY_PAUSE: if another app holds media-key priority while playing, PLAY
+ * is a no-op there instead of pausing it.
  */
 internal fun dispatchPlayMediaKey(context: Context) {
     com.stepcast.app.data.PlaybackJournal.log("mediakey", "dispatch PLAY")
