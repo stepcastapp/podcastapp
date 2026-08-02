@@ -175,13 +175,29 @@ fun HomeScreen(
             }
         } else {
             // the answer to "anything new since I last looked?" without
-            // opening every show — tap through to the triage inbox
-            val inboxCount by repository.inboxCount().collectAsState(initial = 0)
+            // opening every show — tap through to the triage inbox.
+            // remember(): a bare repository.inboxCount() call creates a
+            // FRESH Room query flow on every recomposition of this screen,
+            // so the card kept re-querying (and briefly showing stale/
+            // absent state) far more often than just once at first launch.
+            val inboxCount by remember(repository) { repository.inboxCount() }
+                .collectAsState(initial = 0)
             if (inboxCount > 0) {
+                // this card slots in ABOVE the grid, pushing everything
+                // below it down the instant the count arrives — a tap
+                // timed for whatever used to be in that spot lands on the
+                // card instead and silently launches Inbox. Ignore taps
+                // for a brief settle window after it first appears so an
+                // accidental hit does nothing rather than jumping screens.
+                var settled by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(400)
+                    settled = true
+                }
                 androidx.compose.material3.Surface(
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                     shape = RoundedCornerShape(16.dp),
-                    onClick = onOpenInbox,
+                    onClick = { if (settled) onOpenInbox() },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp)
