@@ -222,6 +222,7 @@ fun HomeScreen(
                 podcasts = podcasts,
                 memberships = memberships,
                 categoryOrder = categoryMetas.map { it.name },
+                badgeByPodcast = badgeByPodcast,
                 selectedIds = selected,
                 onPodcastClick = { id ->
                     if (selected.isNotEmpty()) toggleSelected(id) else onPodcastClick(id)
@@ -332,6 +333,7 @@ private fun PodcastGrid(
     podcasts: List<Podcast>,
     memberships: List<com.stepcast.app.data.PodcastCategory>,
     categoryOrder: List<String>,
+    badgeByPodcast: Map<Long, com.stepcast.app.data.PodcastBadgeCounts>,
     selectedIds: List<Long>,
     onPodcastClick: (Long) -> Unit,
     onPodcastLongClick: (Long) -> Unit,
