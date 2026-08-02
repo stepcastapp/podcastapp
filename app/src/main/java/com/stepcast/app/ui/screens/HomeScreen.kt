@@ -382,9 +382,7 @@ private fun PodcastGrid(
     val collapsed = com.stepcast.app.data.AppSettings.collapsedCategories
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(
-            minSize = com.stepcast.app.data.AppSettings.libraryCardWidthDp.dp
-        ),
+        columns = GridCells.Fixed(com.stepcast.app.data.AppSettings.libraryColumnCount),
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),

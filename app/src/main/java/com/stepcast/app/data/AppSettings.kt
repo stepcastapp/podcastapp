@@ -75,8 +75,8 @@ object AppSettings {
     var libraryCompactList by mutableStateOf(false)
         private set
 
-    /** Library grid tile minimum width — narrower = more columns. */
-    var libraryCardWidthDp by mutableStateOf(104)
+    /** Library grid: exact column count, 3-8. */
+    var libraryColumnCount by mutableStateOf(4)
         private set
 
     /** Corner badge on Home cards: see BADGE_* below. */
@@ -141,7 +141,7 @@ object AppSettings {
         continueCurrentShow = p[booleanPreferencesKey(KEY_CONTINUE_SHOW)] ?: false
         categoryRefreshButtons = p[booleanPreferencesKey(KEY_CAT_REFRESH)] ?: false
         libraryCompactList = p[booleanPreferencesKey(KEY_LIB_COMPACT)] ?: false
-        libraryCardWidthDp = p[intPreferencesKey(KEY_LIB_CARD_WIDTH)] ?: 104
+        libraryColumnCount = p[intPreferencesKey(KEY_LIB_COLUMNS)]?.coerceIn(3, 8) ?: 4
         homeBadgeMode = p[intPreferencesKey(KEY_HOME_BADGE)] ?: BADGE_OFF
         activeStationId = p[longPreferencesKey(KEY_ACTIVE_STATION)] ?: 0L
         checkpointTimes = parseIntList(
@@ -220,9 +220,9 @@ object AppSettings {
         putBoolean(context, KEY_LIB_COMPACT, enabled)
     }
 
-    fun setLibraryCardWidthDp(context: Context, dp: Int) {
-        libraryCardWidthDp = dp.coerceIn(72, 200)
-        putInt(context, KEY_LIB_CARD_WIDTH, libraryCardWidthDp)
+    fun setLibraryColumnCount(context: Context, count: Int) {
+        libraryColumnCount = count.coerceIn(3, 8)
+        putInt(context, KEY_LIB_COLUMNS, libraryColumnCount)
     }
 
     fun setHomeBadgeMode(context: Context, mode: Int) {
@@ -408,7 +408,7 @@ object AppSettings {
     private const val KEY_CONTINUE_SHOW = "continueCurrentShow"
     private const val KEY_CAT_REFRESH = "categoryRefreshButtons"
     private const val KEY_LIB_COMPACT = "libraryCompactList"
-    private const val KEY_LIB_CARD_WIDTH = "libraryCardWidthDp"
+    private const val KEY_LIB_COLUMNS = "libraryColumnCount"
     private const val KEY_HOME_BADGE = "homeBadgeMode"
     private const val KEY_ACTIVE_STATION = "activeStationId"
     private const val KEY_CHECKPOINT_TIMES = "checkpointTimes"

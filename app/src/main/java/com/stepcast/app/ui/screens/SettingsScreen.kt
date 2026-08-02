@@ -671,16 +671,11 @@ fun SettingsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.horizontalScroll(rememberScrollState())
             ) {
-                for ((label, dp) in listOf(
-                    stringResource(R.string.card_size_small) to 84,
-                    stringResource(R.string.card_size_medium) to 104,
-                    stringResource(R.string.card_size_large) to 128,
-                    stringResource(R.string.card_size_extra_large) to 152
-                )) {
+                for (count in 3..8) {
                     FilterChip(
-                        selected = AppSettings.libraryCardWidthDp == dp,
-                        onClick = { AppSettings.setLibraryCardWidthDp(context, dp) },
-                        label = { Text(label) }
+                        selected = AppSettings.libraryColumnCount == count,
+                        onClick = { AppSettings.setLibraryColumnCount(context, count) },
+                        label = { Text(count.toString()) }
                     )
                 }
             }
