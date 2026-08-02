@@ -1,6 +1,7 @@
 package com.stepcast.app.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -204,13 +205,20 @@ fun PodcastScreen(
                                 color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
-                            TextButton(
-                                onClick = { fixFeedOpen = true },
-                                contentPadding = androidx.compose.foundation.layout
-                                    .PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                            ) {
-                                Text(stringResource(R.string.find_replacement_feed))
-                            }
+                            // plain clickable Text, not TextButton: the
+                            // wrapped-to-multiple-lines case (this warning
+                            // can push the label to 2-3 lines on a narrow
+                            // column) clipped the first glyph of every
+                            // line but one under TextButton's own sizing —
+                            // the only multi-line TextButton in the app
+                            Text(
+                                stringResource(R.string.find_replacement_feed),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                                    .clickable { fixFeedOpen = true }
+                            )
                         }
                         podcast?.takeIf { it.localFolderUri == null }?.let { p ->
                             Text(
