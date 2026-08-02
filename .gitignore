@@ -15,4 +15,4 @@ stepcast-upload.keystore
 *.jks
 *.aab
 *.apk
-scratch_frames/
+scratch_frames*/
