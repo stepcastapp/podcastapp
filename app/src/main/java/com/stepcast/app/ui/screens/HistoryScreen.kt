@@ -23,16 +23,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import com.stepcast.app.R
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.stepcast.app.data.PodcastRepository
 import com.stepcast.app.ui.Formatters
 import com.stepcast.app.ui.PlayerConnection
@@ -55,6 +58,7 @@ fun HistoryScreen(
     val podcasts by repository.podcasts.collectAsState(initial = emptyList())
     val byId = podcasts.associateBy { it.id }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val snackbar = androidx.compose.runtime.remember {
         androidx.compose.material3.SnackbarHostState()
     }
@@ -103,7 +107,21 @@ fun HistoryScreen(
                             .padding(start = 12.dp, top = 8.dp, bottom = 8.dp)
                     ) {
                         AsyncImage(
-                            model = episode.imageUrl ?: podcast?.imageUrl,
+                            model = remember(episode.imageUrl, podcast?.imageUrl) {
+                                ImageRequest.Builder(context)
+                                    .data(episode.imageUrl ?: podcast?.imageUrl)
+                                    // the show's art is almost always
+                                    // already warm in Coil's memory cache —
+                                    // show it immediately instead of a
+                                    // blank square while episode art loads
+                                    .apply {
+                                        val fallback = podcast?.imageUrl
+                                        if (episode.imageUrl != null && fallback != null) {
+                                            placeholderMemoryCacheKey(fallback)
+                                        }
+                                    }
+                                    .build()
+                            },
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier

@@ -298,6 +298,7 @@ private fun QueueList(
     // to revert moments later.
     val latestQueue by androidx.compose.runtime.rememberUpdatedState(queue)
     val latestReversed by androidx.compose.runtime.rememberUpdatedState(reversed)
+    val context = LocalContext.current
     val fallbackRowPx = with(LocalDensity.current) { 68.dp.toPx() }
     // how far a row may poke past the end of the list — just enough to feel
     // alive, not enough to ride over the now-playing strip
@@ -638,7 +639,21 @@ private fun QueueList(
                         }
                 )
                 AsyncImage(
-                    model = episode.imageUrl ?: podcast?.imageUrl,
+                    model = remember(episode.imageUrl, podcast?.imageUrl) {
+                        coil.request.ImageRequest.Builder(context)
+                            .data(episode.imageUrl ?: podcast?.imageUrl)
+                            // the show's art is almost always already warm
+                            // in Coil's memory cache from elsewhere on
+                            // screen — show it immediately instead of a
+                            // blank square while episode art loads
+                            .apply {
+                                val fallback = podcast?.imageUrl
+                                if (episode.imageUrl != null && fallback != null) {
+                                    placeholderMemoryCacheKey(fallback)
+                                }
+                            }
+                            .build()
+                    },
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier

@@ -64,6 +64,7 @@ import com.stepcast.app.R
 import androidx.compose.ui.unit.dp
 import androidx.core.text.HtmlCompat
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.stepcast.app.data.AppSettings
 import com.stepcast.app.data.Episode
 import com.stepcast.app.data.PodcastRepository
@@ -346,7 +347,21 @@ private fun EpisodeRowContent(
         // glance next to the full-color unplayed rows
         val playedLook = episode.played && !isCurrent
         AsyncImage(
-            model = episode.imageUrl ?: fallbackArt,
+            model = remember(episode.imageUrl, fallbackArt) {
+                ImageRequest.Builder(context)
+                    .data(episode.imageUrl ?: fallbackArt)
+                    // the show's own art is almost always already warm in
+                    // Coil's memory cache (it's what the header/strip above
+                    // this list just rendered) — showing it immediately
+                    // while episode-specific art loads beats a blank
+                    // square popping in a moment later
+                    .apply {
+                        if (episode.imageUrl != null && fallbackArt != null) {
+                            placeholderMemoryCacheKey(fallbackArt)
+                        }
+                    }
+                    .build()
+            },
             contentDescription = null,
             contentScale = ContentScale.Crop,
             alpha = if (playedLook) 0.45f else 1f,
