@@ -118,6 +118,12 @@ interface PodcastDao {
     )
     suspend fun updateListPrefs(id: Long, cap: Int, oldestFirst: Boolean, autoQueue: Boolean)
 
+    @Query("UPDATE podcasts SET lastEpisodeFilter = :mode WHERE id = :id")
+    suspend fun setLastEpisodeFilter(id: Long, mode: Int)
+
+    @Query("UPDATE podcasts SET episodeSortMode = :mode WHERE id = :id")
+    suspend fun setEpisodeSortMode(id: Long, mode: Int)
+
     @Query("UPDATE podcasts SET consecutiveFailures = consecutiveFailures + 1 WHERE id = :id")
     suspend fun incrementFailures(id: Long)
 
@@ -221,6 +227,12 @@ interface EpisodeDao {
 
     @Query("UPDATE episodes SET imageUrl = :imageUrl WHERE id = :id AND imageUrl IS NULL")
     suspend fun updateImageUrlIfMissing(id: Long, imageUrl: String)
+
+    @Query(
+        "UPDATE episodes SET sourceFileName = :name " +
+            "WHERE id = :id AND sourceFileName IS NULL"
+    )
+    suspend fun updateSourceFileNameIfMissing(id: Long, name: String)
 
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun get(id: Long): Episode?
@@ -447,13 +459,38 @@ interface EpisodeDao {
     )
     fun observeCounts(podcastId: Long): Flow<EpisodeCounts>
 
+    /** Per-podcast badge counts for the whole library at once (Home cards). */
+    @Query(
+        "SELECT podcastId, " +
+            "COALESCE(SUM(CASE WHEN downloadStatus = 2 OR audioUrl LIKE 'content:%' " +
+            "THEN 1 ELSE 0 END), 0) AS downloaded, " +
+            "COALESCE(SUM(CASE WHEN favorite = 1 THEN 1 ELSE 0 END), 0) AS favorite, " +
+            "COALESCE(SUM(CASE WHEN played = 0 THEN 1 ELSE 0 END), 0) AS unplayed " +
+            "FROM episodes GROUP BY podcastId"
+    )
+    fun observeBadgeCounts(): Flow<List<PodcastBadgeCounts>>
+
+    @Query("UPDATE episodes SET favorite = :favorite WHERE id = :id")
+    suspend fun setFavorite(id: Long, favorite: Boolean)
+
+    /**
+     * Sort mode 0 (date) uses [oldestFirst]; 1 (title) and 2 (filename, with
+     * a title fallback for RSS episodes that have none) ignore it — the
+     * CASE columns leave every non-selected mode NULL, so SQLite just
+     * skips straight to whichever ORDER BY key is actually populated.
+     */
     @Query(
         "SELECT * FROM episodes WHERE podcastId = :podcastId ORDER BY " +
-            "CASE WHEN :oldestFirst = 1 THEN pubDateMs END ASC, " +
-            "CASE WHEN :oldestFirst = 0 THEN pubDateMs END DESC LIMIT :limit"
+            "CASE WHEN :sortMode = 1 THEN title END COLLATE NOCASE ASC, " +
+            "CASE WHEN :sortMode = 2 THEN COALESCE(sourceFileName, title) END " +
+            "COLLATE NOCASE ASC, " +
+            "CASE WHEN :sortMode = 0 AND :oldestFirst = 1 THEN pubDateMs END ASC, " +
+            "CASE WHEN :sortMode = 0 AND :oldestFirst = 0 THEN pubDateMs END DESC " +
+            "LIMIT :limit"
     )
     fun observeForPodcastPaged(
         podcastId: Long,
+        sortMode: Int,
         oldestFirst: Int,
         limit: Int
     ): Flow<List<Episode>>
@@ -657,6 +694,14 @@ interface CategoryDao {
 
 /** Projection for [EpisodeDao.observeCounts]. */
 data class EpisodeCounts(val total: Int, val unplayed: Int)
+
+/** Projection for [EpisodeDao.observeBadgeCounts] — one row per podcast. */
+data class PodcastBadgeCounts(
+    val podcastId: Long,
+    val downloaded: Int,
+    val favorite: Int,
+    val unplayed: Int
+)
 
 @Dao
 interface PodcastCategoryDao {

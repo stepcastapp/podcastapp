@@ -360,6 +360,13 @@ fun SearchScreen(
                                                 repository.deleteDownload(episode.id)
                                             }
                                         },
+                                        onToggleFavorite = {
+                                            scope.launch {
+                                                repository.setFavorite(
+                                                    episode.id, !episode.favorite
+                                                )
+                                            }
+                                        },
                                         onSwipeAction = { action ->
                                             scope.launch {
                                                 performSwipeAction(

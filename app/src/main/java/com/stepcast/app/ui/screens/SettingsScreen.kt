@@ -661,6 +661,52 @@ fun SettingsScreen(
             checked = AppSettings.libraryCompactList,
             onToggle = { AppSettings.setLibraryCompactList(context, it) }
         )
+        if (!AppSettings.libraryCompactList) {
+            Text(
+                stringResource(R.string.card_size),
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState())
+            ) {
+                for ((label, dp) in listOf(
+                    stringResource(R.string.card_size_small) to 84,
+                    stringResource(R.string.card_size_medium) to 104,
+                    stringResource(R.string.card_size_large) to 128,
+                    stringResource(R.string.card_size_extra_large) to 152
+                )) {
+                    FilterChip(
+                        selected = AppSettings.libraryCardWidthDp == dp,
+                        onClick = { AppSettings.setLibraryCardWidthDp(context, dp) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+        }
+        Text(
+            stringResource(R.string.home_card_badge),
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            for ((label, mode) in listOf(
+                stringResource(R.string.off) to AppSettings.BADGE_OFF,
+                stringResource(R.string.downloaded) to AppSettings.BADGE_DOWNLOADED,
+                stringResource(R.string.favorites) to AppSettings.BADGE_FAVORITE,
+                stringResource(R.string.unplayed) to AppSettings.BADGE_UNPLAYED
+            )) {
+                FilterChip(
+                    selected = AppSettings.homeBadgeMode == mode,
+                    onClick = { AppSettings.setHomeBadgeMode(context, mode) },
+                    label = { Text(label) }
+                )
+            }
+        }
         SwitchSetting(
             label = stringResource(R.string.category_refresh_buttons),
             hint = stringResource(R.string.a_refresh_icon_on_each_category_header_in),

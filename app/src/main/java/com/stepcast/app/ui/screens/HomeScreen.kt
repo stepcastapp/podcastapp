@@ -85,6 +85,8 @@ fun HomeScreen(
     val podcasts by repository.podcasts.collectAsState(initial = emptyList())
     val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
     val memberships by repository.podcastCategories.collectAsState(initial = emptyList())
+    val badgeCounts by repository.podcastBadgeCounts.collectAsState(initial = emptyList())
+    val badgeByPodcast = remember(badgeCounts) { badgeCounts.associateBy { it.podcastId } }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // categories created before metas existed get rows on first sight
@@ -360,7 +362,9 @@ private fun PodcastGrid(
     val collapsed = com.stepcast.app.data.AppSettings.collapsedCategories
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 104.dp),
+        columns = GridCells.Adaptive(
+            minSize = com.stepcast.app.data.AppSettings.libraryCardWidthDp.dp
+        ),
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -451,6 +455,7 @@ private fun PodcastGrid(
                     items(members, key = { "c/$category/${it.id}" }) { podcast ->
                         PodcastTile(
                             podcast = podcast,
+                            badgeCounts = badgeByPodcast[podcast.id],
                             selected = podcast.id in selectedIds,
                             onClick = { onPodcastClick(podcast.id) },
                             onLongClick = { onPodcastLongClick(podcast.id) }
@@ -493,6 +498,7 @@ private fun PodcastGrid(
                 items(uncategorized, key = { "u/${it.id}" }) { podcast ->
                     PodcastTile(
                         podcast = podcast,
+                        badgeCounts = badgeByPodcast[podcast.id],
                         selected = podcast.id in selectedIds,
                         onClick = { onPodcastClick(podcast.id) },
                         onLongClick = { onPodcastLongClick(podcast.id) }
@@ -548,6 +554,7 @@ private fun PodcastGrid(
                 items(failing, key = { "a/${it.id}" }) { podcast ->
                     PodcastTile(
                         podcast = podcast,
+                        badgeCounts = badgeByPodcast[podcast.id],
                         selected = podcast.id in selectedIds,
                         onClick = { onPodcastClick(podcast.id) },
                         onLongClick = { onPodcastLongClick(podcast.id) }
@@ -623,10 +630,20 @@ private fun PodcastCompactRow(
 @Composable
 private fun PodcastTile(
     podcast: Podcast,
+    badgeCounts: com.stepcast.app.data.PodcastBadgeCounts?,
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
+    val badgeMode = com.stepcast.app.data.AppSettings.homeBadgeMode
+    val badgeValue = badgeCounts?.let {
+        when (badgeMode) {
+            com.stepcast.app.data.AppSettings.BADGE_DOWNLOADED -> it.downloaded
+            com.stepcast.app.data.AppSettings.BADGE_FAVORITE -> it.favorite
+            com.stepcast.app.data.AppSettings.BADGE_UNPLAYED -> it.unplayed
+            else -> null
+        }
+    }?.takeIf { it > 0 }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -674,6 +691,22 @@ private fun PodcastTile(
                         .padding(6.dp)
                         .background(MaterialTheme.colorScheme.surface, CircleShape)
                 )
+            }
+            if (badgeValue != null) {
+                androidx.compose.material3.Surface(
+                    color = MaterialTheme.colorScheme.primary,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        if (badgeValue > 99) "99+" else badgeValue.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
         Text(

@@ -184,11 +184,29 @@ class PodcastRepository(
         db.podcastDao().incrementFailures(podcastId)
     }
 
-    fun episodesForPaged(podcastId: Long, oldestFirst: Boolean, limit: Int) =
-        db.episodeDao().observeForPodcastPaged(podcastId, if (oldestFirst) 1 else 0, limit)
+    fun episodesForPaged(
+        podcastId: Long,
+        sortMode: Int,
+        oldestFirst: Boolean,
+        limit: Int
+    ) = db.episodeDao().observeForPodcastPaged(
+        podcastId, sortMode, if (oldestFirst) 1 else 0, limit
+    )
 
     /** True total/unplayed counts, independent of the paged list. */
     fun episodeCounts(podcastId: Long) = db.episodeDao().observeCounts(podcastId)
+
+    /** Per-podcast downloaded/favorite/unplayed counts for Home badges. */
+    val podcastBadgeCounts get() = db.episodeDao().observeBadgeCounts()
+
+    suspend fun setFavorite(episodeId: Long, favorite: Boolean) =
+        db.episodeDao().setFavorite(episodeId, favorite)
+
+    suspend fun setLastEpisodeFilter(podcastId: Long, mode: Int) =
+        db.podcastDao().setLastEpisodeFilter(podcastId, mode)
+
+    suspend fun setEpisodeSortMode(podcastId: Long, mode: Int) =
+        db.podcastDao().setEpisodeSortMode(podcastId, mode)
 
     /** Bulk cleanup: everything older than [days] becomes played. */
     suspend fun markPlayedOlderThan(podcastId: Long, days: Int) {
@@ -379,7 +397,8 @@ class PodcastRepository(
                         guid = file.uri.toString(),
                         title = if (prefix.isEmpty()) title else "$prefix — $title",
                         audioUrl = file.uri.toString(),
-                        pubDateMs = file.lastModified()
+                        pubDateMs = file.lastModified(),
+                        sourceFileName = name
                     )
                 }
             }
@@ -388,6 +407,18 @@ class PodcastRepository(
 
         val insertedIds = db.episodeDao().insertAll(found)
         val added = insertedIds.count { it != -1L }
+
+        // backfill the raw filename onto episodes scanned before this field
+        // existed (insertAll ignores conflicts, so it never touches them) —
+        // guid is the file's own URI, same key `found` is keyed by
+        val nameByGuid = found.associate { it.guid to it.sourceFileName }
+        for (ep in db.episodeDao().listForPodcast(podcast.id)) {
+            if (ep.sourceFileName == null) {
+                nameByGuid[ep.guid]?.let { name ->
+                    db.episodeDao().updateSourceFileNameIfMissing(ep.id, name)
+                }
+            }
+        }
 
         // One metadata pass per file that still needs something: duration
         // for new rows, embedded artwork for ANY episode without art (this

@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SmartPlay::class, SmartPlayEntry::class, CategoryMeta::class,
         ListenStat::class, PodcastCategory::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class StepcastDatabase : RoomDatabase() {
@@ -180,6 +180,26 @@ abstract class StepcastDatabase : RoomDatabase() {
             }
         }
 
+        // Per-feed episode-list memory (filter chip, sort mode) plus
+        // favoriting and the raw local-folder filename (kept separately
+        // from the derived, extension-stripped title).
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE podcasts ADD COLUMN lastEpisodeFilter " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE podcasts ADD COLUMN episodeSortMode " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE episodes ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL("ALTER TABLE episodes ADD COLUMN sourceFileName TEXT")
+            }
+        }
+
         fun get(context: Context): StepcastDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -191,7 +211,7 @@ abstract class StepcastDatabase : RoomDatabase() {
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
                         MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
-                        MIGRATION_18_19
+                        MIGRATION_18_19, MIGRATION_19_20
                     )
                     // Destructive fallback ONLY in debug builds. In release,
                     // a missing migration or schema-hash mismatch must crash

@@ -1,6 +1,7 @@
 package com.stepcast.app.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +24,8 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -37,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -55,6 +60,7 @@ import androidx.compose.ui.res.stringResource
 import com.stepcast.app.R
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.stepcast.app.data.Podcast
 import com.stepcast.app.data.PodcastRepository
 import com.stepcast.app.download.DownloadWorker
 import com.stepcast.app.ui.PlayerConnection
@@ -72,22 +78,38 @@ fun PodcastScreen(
     onUnsubscribed: () -> Unit
 ) {
     val podcast by repository.observePodcast(podcastId).collectAsState(initial = null)
+    val scope = rememberCoroutineScope()
     // paged: a 2000-episode feed must not inflate 2000 rows at once
     var episodeLimit by rememberSaveable { mutableStateOf(100) }
     val oldestFirst = podcast?.sortOldestFirst == true
-    val episodes by remember(podcastId, episodeLimit, oldestFirst) {
-        repository.episodesForPaged(podcastId, oldestFirst, episodeLimit)
+    val sortMode = podcast?.episodeSortMode ?: Podcast.SORT_DATE
+    val episodes by remember(podcastId, episodeLimit, sortMode, oldestFirst) {
+        repository.episodesForPaged(podcastId, sortMode, oldestFirst, episodeLimit)
     }.collectAsState(initial = emptyList())
     val queueIds by repository.queue.collectAsState(initial = emptyList())
     val queuedIds = queueIds.mapTo(HashSet()) { it.id }
     // header counts come straight from the DB — episodes above is paged
     val counts by remember(podcastId) { repository.episodeCounts(podcastId) }
         .collectAsState(initial = null)
-    var downloadedOnly by rememberSaveable { mutableStateOf(false) }
+    // seeded from the show's remembered choice on first load only — a
+    // stray recomposition of the podcast row (e.g. a refresh finishing)
+    // must not silently reset the chip the user picked this visit
+    var filterMode by remember(podcastId) { mutableStateOf(Podcast.FILTER_ALL) }
+    LaunchedEffect(podcast?.id) {
+        podcast?.let { filterMode = it.lastEpisodeFilter }
+    }
+    fun pickFilter(mode: Int) {
+        filterMode = mode
+        scope.launch { repository.setLastEpisodeFilter(podcastId, mode) }
+    }
     // isAvailableOffline, not isDownloaded: a local folder's episodes are
     // already on-device — the chip used to filter ALL of them out
-    val shownEpisodes =
-        if (downloadedOnly) episodes.filter { it.isAvailableOffline } else episodes
+    val shownEpisodes = when (filterMode) {
+        Podcast.FILTER_DOWNLOADED -> episodes.filter { it.isAvailableOffline }
+        Podcast.FILTER_UNPLAYED -> episodes.filter { !it.played }
+        Podcast.FILTER_FAVORITE -> episodes.filter { it.favorite }
+        else -> episodes
+    }
     val allPodcasts by repository.podcasts.collectAsState(initial = emptyList())
     val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
     val categories = categoryMetas.map { it.name }
@@ -97,7 +119,6 @@ fun PodcastScreen(
     val myCategories = allMemberships
         .filter { it.podcastId == podcastId }
         .map { it.category }
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var menuOpen by remember { mutableStateOf(false) }
@@ -316,17 +337,33 @@ fun PodcastScreen(
                 }
             }
 
-            Row(modifier = Modifier.padding(start = 12.dp)) {
+            Row(
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .horizontalScroll(rememberScrollState())
+            ) {
                 FilterChip(
-                    selected = !downloadedOnly,
-                    onClick = { downloadedOnly = false },
+                    selected = filterMode == Podcast.FILTER_ALL,
+                    onClick = { pickFilter(Podcast.FILTER_ALL) },
                     label = { Text(stringResource(R.string.all)) }
                 )
                 Spacer(Modifier.width(8.dp))
                 FilterChip(
-                    selected = downloadedOnly,
-                    onClick = { downloadedOnly = true },
+                    selected = filterMode == Podcast.FILTER_DOWNLOADED,
+                    onClick = { pickFilter(Podcast.FILTER_DOWNLOADED) },
                     label = { Text(stringResource(R.string.downloaded)) }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = filterMode == Podcast.FILTER_UNPLAYED,
+                    onClick = { pickFilter(Podcast.FILTER_UNPLAYED) },
+                    label = { Text(stringResource(R.string.unplayed)) }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = filterMode == Podcast.FILTER_FAVORITE,
+                    onClick = { pickFilter(Podcast.FILTER_FAVORITE) },
+                    label = { Text(stringResource(R.string.favorites)) }
                 )
             }
 
@@ -338,16 +375,18 @@ fun PodcastScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             com.stepcast.app.ui.theme.EmptyState(
-                                icon = if (downloadedOnly) {
-                                    Icons.Rounded.Download
-                                } else {
-                                    Icons.Rounded.Refresh
+                                icon = when (filterMode) {
+                                    Podcast.FILTER_DOWNLOADED -> Icons.Rounded.Download
+                                    Podcast.FILTER_UNPLAYED -> Icons.Rounded.CheckCircle
+                                    Podcast.FILTER_FAVORITE -> Icons.Rounded.Star
+                                    else -> Icons.Rounded.Refresh
                                 },
                                 title = stringResource(
-                                    if (downloadedOnly) {
-                                        R.string.no_downloaded_episodes
-                                    } else {
-                                        R.string.no_episodes_yet
+                                    when (filterMode) {
+                                        Podcast.FILTER_DOWNLOADED -> R.string.no_downloaded_episodes
+                                        Podcast.FILTER_UNPLAYED -> R.string.no_unplayed_episodes
+                                        Podcast.FILTER_FAVORITE -> R.string.no_favorite_episodes
+                                        else -> R.string.no_episodes_yet
                                     }
                                 ),
                                 hint = ""
@@ -393,6 +432,9 @@ fun PodcastScreen(
                         onCancelDownload = { DownloadWorker.cancel(context, episode.id) },
                         onDeleteDownload = {
                             scope.launch { repository.deleteDownload(episode.id) }
+                        },
+                        onToggleFavorite = {
+                            scope.launch { repository.setFavorite(episode.id, !episode.favorite) }
                         },
                         onSwipeAction = { action ->
                             scope.launch {
@@ -457,6 +499,7 @@ fun PodcastScreen(
             sortOldestFirst = podcast!!.sortOldestFirst,
             autoQueue = podcast!!.autoQueue,
             isLocalFolder = podcast!!.localFolderUri != null,
+            episodeSortMode = podcast!!.episodeSortMode,
             onDismiss = { settingsDialogOpen = false },
             onSave = { result ->
                 settingsDialogOpen = false
@@ -482,6 +525,7 @@ fun PodcastScreen(
                         result.sortOldestFirst,
                         result.autoQueue
                     )
+                    repository.setEpisodeSortMode(podcastId, result.episodeSortMode)
                 }
             }
         )
@@ -598,7 +642,8 @@ data class PodcastSettingsResult(
     val maxAge: Int,
     val episodeCap: Int,
     val sortOldestFirst: Boolean,
-    val autoQueue: Boolean
+    val autoQueue: Boolean,
+    val episodeSortMode: Int
 )
 
 @Composable
@@ -615,6 +660,7 @@ private fun PodcastSettingsDialog(
     sortOldestFirst: Boolean,
     autoQueue: Boolean,
     isLocalFolder: Boolean,
+    episodeSortMode: Int,
     onDismiss: () -> Unit,
     onSave: (PodcastSettingsResult) -> Unit
 ) {
@@ -636,6 +682,7 @@ private fun PodcastSettingsDialog(
     var capText by remember { mutableStateOf(if (episodeCap > 0) episodeCap.toString() else "") }
     var oldestFirst by remember { mutableStateOf(sortOldestFirst) }
     var queueNew by remember { mutableStateOf(autoQueue) }
+    var sortMode by remember { mutableStateOf(episodeSortMode) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -756,16 +803,47 @@ private fun PodcastSettingsDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        stringResource(R.string.oldest_first_serials),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f)
+                Text(
+                    stringResource(R.string.sort_episodes_by),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    FilterChip(
+                        selected = sortMode == Podcast.SORT_DATE,
+                        onClick = { sortMode = Podcast.SORT_DATE },
+                        label = { Text(stringResource(R.string.sort_date)) }
                     )
-                    androidx.compose.material3.Switch(
-                        checked = oldestFirst,
-                        onCheckedChange = { oldestFirst = it }
+                    FilterChip(
+                        selected = sortMode == Podcast.SORT_TITLE,
+                        onClick = { sortMode = Podcast.SORT_TITLE },
+                        label = { Text(stringResource(R.string.sort_title_a_z)) }
                     )
+                    if (isLocalFolder) {
+                        FilterChip(
+                            selected = sortMode == Podcast.SORT_FILENAME,
+                            onClick = { sortMode = Podcast.SORT_FILENAME },
+                            label = { Text(stringResource(R.string.sort_filename_a_z)) }
+                        )
+                    }
+                }
+                if (sortMode == Podcast.SORT_DATE) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            stringResource(R.string.oldest_first_serials),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = oldestFirst,
+                            onCheckedChange = { oldestFirst = it }
+                        )
+                    }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -804,7 +882,8 @@ private fun PodcastSettingsDialog(
                         maxAge = ageText.toIntOrNull() ?: 0,
                         episodeCap = capText.toIntOrNull() ?: 0,
                         sortOldestFirst = oldestFirst,
-                        autoQueue = queueNew
+                        autoQueue = queueNew,
+                        episodeSortMode = sortMode
                     )
                 )
             }) { Text(stringResource(R.string.save)) }

@@ -156,6 +156,7 @@ fun swipeActionLabel(key: String): String =
             com.stepcast.app.data.AppSettings.SWIPE_QUEUE -> com.stepcast.app.R.string.swipe_queue
             com.stepcast.app.data.AppSettings.SWIPE_DOWNLOAD -> com.stepcast.app.R.string.swipe_download
             com.stepcast.app.data.AppSettings.SWIPE_DONE -> com.stepcast.app.R.string.swipe_done
+            com.stepcast.app.data.AppSettings.SWIPE_FAVORITE -> com.stepcast.app.R.string.swipe_favorite
             else -> com.stepcast.app.R.string.swipe_played
         }
     )

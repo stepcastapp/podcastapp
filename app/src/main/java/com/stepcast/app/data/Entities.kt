@@ -54,8 +54,25 @@ data class Podcast(
      * dow*1440+minutes, 4 = manual only.
      */
     val scheduleMode: Int = 0,
-    val scheduleParam: Int = 0
-)
+    val scheduleParam: Int = 0,
+    /** Last chip picked in this feed's episode list; remembered per show. */
+    val lastEpisodeFilter: Int = FILTER_ALL,
+    /** How this feed's episode list orders — see SORT_* below. */
+    val episodeSortMode: Int = SORT_DATE
+) {
+    companion object {
+        const val FILTER_ALL = 0
+        const val FILTER_DOWNLOADED = 1
+        const val FILTER_UNPLAYED = 2
+        const val FILTER_FAVORITE = 3
+
+        const val SORT_DATE = 0
+        /** By title, A–Z. */
+        const val SORT_TITLE = 1
+        /** By the on-disk filename, A–Z — local folders only. */
+        const val SORT_FILENAME = 2
+    }
+}
 
 @Entity(
     tableName = "episodes",
@@ -101,7 +118,16 @@ data class Episode(
      * refresh of an imported stub) so a big import doesn't mass-download its
      * history; episodes that arrive on later refreshes default to true.
      */
-    val autoDownloadEligible: Boolean = true
+    val autoDownloadEligible: Boolean = true,
+    val favorite: Boolean = false,
+    /**
+     * Raw on-disk filename (with extension) for a local-folder episode;
+     * null for RSS episodes. Kept separately from [title] (which strips
+     * the extension and adds a subfolder prefix) so "sort by filename"
+     * can differ from "sort by title" even though title is currently
+     * filename-derived.
+     */
+    val sourceFileName: String? = null
 ) {
     val progressFraction: Float
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f

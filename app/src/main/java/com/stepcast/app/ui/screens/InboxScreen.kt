@@ -154,6 +154,9 @@ fun InboxScreen(
                         onDeleteDownload = {
                             scope.launch { repository.deleteDownload(episode.id) }
                         },
+                        onToggleFavorite = {
+                            scope.launch { repository.setFavorite(episode.id, !episode.favorite) }
+                        },
                         onSwipeAction = { action ->
                             scope.launch {
                                 performSwipeAction(

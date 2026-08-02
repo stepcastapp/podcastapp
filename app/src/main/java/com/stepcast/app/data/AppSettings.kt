@@ -75,6 +75,14 @@ object AppSettings {
     var libraryCompactList by mutableStateOf(false)
         private set
 
+    /** Library grid tile minimum width — narrower = more columns. */
+    var libraryCardWidthDp by mutableStateOf(104)
+        private set
+
+    /** Corner badge on Home cards: see BADGE_* below. */
+    var homeBadgeMode by mutableStateOf(BADGE_OFF)
+        private set
+
     /** SAF tree URI the weekly auto-backup writes into; null = off. */
     var autoBackupFolder by mutableStateOf<String?>(null)
         private set
@@ -133,6 +141,8 @@ object AppSettings {
         continueCurrentShow = p[booleanPreferencesKey(KEY_CONTINUE_SHOW)] ?: false
         categoryRefreshButtons = p[booleanPreferencesKey(KEY_CAT_REFRESH)] ?: false
         libraryCompactList = p[booleanPreferencesKey(KEY_LIB_COMPACT)] ?: false
+        libraryCardWidthDp = p[intPreferencesKey(KEY_LIB_CARD_WIDTH)] ?: 104
+        homeBadgeMode = p[intPreferencesKey(KEY_HOME_BADGE)] ?: BADGE_OFF
         activeStationId = p[longPreferencesKey(KEY_ACTIVE_STATION)] ?: 0L
         checkpointTimes = parseIntList(
             p[stringPreferencesKey(KEY_CHECKPOINT_TIMES)], listOf(390, 720, 1050, 1320)
@@ -208,6 +218,16 @@ object AppSettings {
     fun setLibraryCompactList(context: Context, enabled: Boolean) {
         libraryCompactList = enabled
         putBoolean(context, KEY_LIB_COMPACT, enabled)
+    }
+
+    fun setLibraryCardWidthDp(context: Context, dp: Int) {
+        libraryCardWidthDp = dp.coerceIn(72, 200)
+        putInt(context, KEY_LIB_CARD_WIDTH, libraryCardWidthDp)
+    }
+
+    fun setHomeBadgeMode(context: Context, mode: Int) {
+        homeBadgeMode = mode.takeIf { it in BADGE_MODES } ?: BADGE_OFF
+        putInt(context, KEY_HOME_BADGE, homeBadgeMode)
     }
 
     fun setContinueCurrentShow(context: Context, enabled: Boolean) {
@@ -388,6 +408,8 @@ object AppSettings {
     private const val KEY_CONTINUE_SHOW = "continueCurrentShow"
     private const val KEY_CAT_REFRESH = "categoryRefreshButtons"
     private const val KEY_LIB_COMPACT = "libraryCompactList"
+    private const val KEY_LIB_CARD_WIDTH = "libraryCardWidthDp"
+    private const val KEY_HOME_BADGE = "homeBadgeMode"
     private const val KEY_ACTIVE_STATION = "activeStationId"
     private const val KEY_CHECKPOINT_TIMES = "checkpointTimes"
     private const val KEY_CHECKPOINT_ON = "checkpointEnabled"
@@ -400,8 +422,17 @@ object AppSettings {
     const val SWIPE_QUEUE = "queue"
     const val SWIPE_DOWNLOAD = "download"
     const val SWIPE_DONE = "done"
+    const val SWIPE_FAVORITE = "favorite"
 
     /** Ordered action keys; labels live in string resources (see
      *  com.stepcast.app.ui.theme.swipeActionLabel). */
-    val SWIPE_ACTIONS = listOf(SWIPE_PLAYED, SWIPE_QUEUE, SWIPE_DOWNLOAD, SWIPE_DONE)
+    val SWIPE_ACTIONS =
+        listOf(SWIPE_PLAYED, SWIPE_QUEUE, SWIPE_DOWNLOAD, SWIPE_DONE, SWIPE_FAVORITE)
+
+    // Home card corner badge
+    const val BADGE_OFF = 0
+    const val BADGE_DOWNLOADED = 1
+    const val BADGE_FAVORITE = 2
+    const val BADGE_UNPLAYED = 3
+    val BADGE_MODES = listOf(BADGE_OFF, BADGE_DOWNLOADED, BADGE_FAVORITE, BADGE_UNPLAYED)
 }

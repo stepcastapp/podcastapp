@@ -29,6 +29,8 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PlaylistAddCheck
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -85,6 +87,7 @@ private fun swipeActionIcon(action: String) = when (action) {
     AppSettings.SWIPE_QUEUE -> Icons.AutoMirrored.Rounded.PlaylistAdd
     AppSettings.SWIPE_DOWNLOAD -> Icons.Rounded.Download
     AppSettings.SWIPE_DONE -> Icons.Rounded.DeleteSweep
+    AppSettings.SWIPE_FAVORITE -> Icons.Rounded.Star
     else -> Icons.Rounded.Check
 }
 
@@ -132,6 +135,20 @@ suspend fun performSwipeAction(
                         DownloadWorker.cancel(context, episode.id)
                     }
                 }
+            }
+        }
+        AppSettings.SWIPE_FAVORITE -> {
+            val newFavorite = !episode.favorite
+            repository.setFavorite(episode.id, newFavorite)
+            val result = snackbar.showSnackbar(
+                message = context.getString(
+                    if (newFavorite) R.string.added_to_favorites else R.string.removed_from_favorites
+                ),
+                actionLabel = context.getString(R.string.undo),
+                withDismissAction = true
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                repository.setFavorite(episode.id, !newFavorite)
             }
         }
         AppSettings.SWIPE_DONE -> {
@@ -189,6 +206,7 @@ fun EpisodeRow(
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onDeleteDownload: () -> Unit,
+    onToggleFavorite: () -> Unit,
     onSwipeAction: (String) -> Unit,
     /** Inbox rows only: adds a "Remove from New" menu entry. */
     onRemoveFromInbox: (() -> Unit)? = null,
@@ -281,6 +299,7 @@ fun EpisodeRow(
                 onDownload = onDownload,
                 onCancelDownload = onCancelDownload,
                 onDeleteDownload = onDeleteDownload,
+                onToggleFavorite = onToggleFavorite,
                 onRemoveFromInbox = onRemoveFromInbox,
                 onGoToPodcast = onGoToPodcast
             )
@@ -307,6 +326,7 @@ private fun EpisodeRowContent(
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onDeleteDownload: () -> Unit,
+    onToggleFavorite: () -> Unit,
     onRemoveFromInbox: (() -> Unit)? = null,
     onGoToPodcast: (() -> Unit)? = null
 ) {
@@ -365,6 +385,15 @@ private fun EpisodeRowContent(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 2.dp)
             ) {
+                if (episode.favorite) {
+                    Icon(
+                        Icons.Rounded.Star,
+                        contentDescription = stringResource(R.string.favorite),
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
                 if (episode.played) {
                     Icon(
                         Icons.Rounded.CheckCircle,
@@ -501,6 +530,26 @@ private fun EpisodeRowContent(
                         )
                     },
                     onClick = { rowMenuOpen = false; onTogglePlayed() }
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                if (episode.favorite) {
+                                    R.string.remove_from_favorites
+                                } else {
+                                    R.string.add_to_favorites
+                                }
+                            )
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            if (episode.favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                            contentDescription = null
+                        )
+                    },
+                    onClick = { rowMenuOpen = false; onToggleFavorite() }
                 )
                 // virtual-feed episodes are already local files
                 val isLocalFile = episode.audioUrl.startsWith("content:")
