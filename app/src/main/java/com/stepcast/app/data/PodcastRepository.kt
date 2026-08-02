@@ -5,10 +5,15 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.room.withTransaction
 import com.stepcast.app.download.DownloadWorker
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -26,6 +31,8 @@ class PodcastRepository(
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 ) {
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     val podcasts get() = db.podcastDao().observeAll()
 
     fun episodesFor(podcastId: Long) = db.episodeDao().observeForPodcast(podcastId)
@@ -1294,7 +1301,21 @@ class PodcastRepository(
     /** ALL inbox ids, not just the 300 the list shows — Clear-all uses this. */
     suspend fun inboxAllIds(): List<Long> = db.episodeDao().inboxIds(inboxSinceMs())
 
-    fun inboxCount() = db.episodeDao().observeInboxCount(inboxSinceMs())
+    /**
+     * Warmed at construction (StepcastApplication.onCreate, well before any
+     * screen renders) instead of on first collection. The Home tab's "New
+     * episodes" card sits ABOVE the category list; when this was a cold
+     * Flow that only started querying once Home first composed, the card
+     * consistently landed a beat after everything else on the screen —
+     * long enough to shift the category list down right as a tap arrived.
+     * Eagerly collecting from app start means the value is normally
+     * already resolved by the time any screen asks for it.
+     */
+    private val inboxCountFlow: StateFlow<Int> =
+        db.episodeDao().observeInboxCount(inboxSinceMs())
+            .stateIn(repoScope, SharingStarted.Eagerly, 0)
+
+    fun inboxCount(): StateFlow<Int> = inboxCountFlow
 
     suspend fun dismissFromInbox(ids: List<Long>) =
         db.episodeDao().setInboxDismissed(ids, true)

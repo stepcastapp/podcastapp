@@ -176,12 +176,14 @@ fun HomeScreen(
         } else {
             // the answer to "anything new since I last looked?" without
             // opening every show — tap through to the triage inbox.
-            // remember(): a bare repository.inboxCount() call creates a
-            // FRESH Room query flow on every recomposition of this screen,
-            // so the card kept re-querying (and briefly showing stale/
-            // absent state) far more often than just once at first launch.
-            val inboxCount by remember(repository) { repository.inboxCount() }
-                .collectAsState(initial = 0)
+            // inboxCount() is a StateFlow warmed at app start (see
+            // PodcastRepository), so the no-initial-arg collectAsState()
+            // overload reads its already-current .value on the very first
+            // frame instead of rendering 0 for a beat while a fresh query
+            // runs — which used to make this card arrive after everything
+            // else on the screen and shift the category list right as a
+            // tap landed.
+            val inboxCount by repository.inboxCount().collectAsState()
             if (inboxCount > 0) {
                 // this card slots in ABOVE the grid, pushing everything
                 // below it down the instant the count arrives — a tap
