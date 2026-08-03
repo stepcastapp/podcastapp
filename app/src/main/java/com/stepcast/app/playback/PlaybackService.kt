@@ -1065,12 +1065,39 @@ class PlaybackService : MediaLibraryService() {
      */
     private suspend fun onEpisodeStarted(mediaItem: MediaItem, reason: Int) {
         val episodeId = mediaItem.mediaId.toLongOrNull() ?: return
+        val player = mediaSession?.player ?: return
+
+        // Do this FIRST, before any of the bookkeeping below: a playlist
+        // auto-advance/seek starts the new item at position 0, and every
+        // extra suspend call between the transition and this corrective
+        // seek is a window where ExoPlayer can already be producing
+        // audible output from the very beginning of the episode — heard
+        // as a flash of the intro before the jump to the real position.
+        // Chapters in particular can mean a network fetch (Podcasting 2.0
+        // JSON chapters); that must never sit ahead of this seek.
+        val episode = app.repository.episode(episodeId)
+        val introMs = app.repository.introSkipMsFor(episodeId)
+        val resumeMs = when (reason) {
+            Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> episode?.resumeStartMs() ?: 0L
+            else -> 0L // explicit play() already passed the start position
+        }
+        val target = maxOf(introMs, resumeMs)
+        if (target > 0 && player.currentPosition < target &&
+            player.currentMediaItem?.mediaId == mediaItem.mediaId
+        ) {
+            PlaybackJournal.log(
+                "raise",
+                "ep=$episodeId reason=$reason from=${player.currentPosition} to=$target"
+            )
+            player.seekTo(target)
+        }
 
         // settle pending listening time against the podcast that earned it
         // before the attribution target changes
         flushStats()
         statsLastPositionMs = -1
-        activePodcastId = app.repository.episode(episodeId)?.podcastId
+        activePodcastId = episode?.podcastId
 
         // per-show ad-jump length feeds the notification button below
         currentAdJumpSec = app.repository.adJumpSecFor(episodeId)
@@ -1094,8 +1121,6 @@ class PlaybackService : MediaLibraryService() {
 
         app.repository.removeFromQueue(episodeId)
 
-        val player = mediaSession?.player ?: return
-
         // per-podcast playback speed, falling back to the user's default
         // (a mid-episode manual tweak lasts until the next episode starts)
         val podcastSpeed = app.repository.speedFor(episodeId)
@@ -1118,23 +1143,6 @@ class PlaybackService : MediaLibraryService() {
             currentChapters = loadedChapters
             currentOutroMs = loadedOutroMs
             currentSkipEpisodeId = episodeId
-        }
-        val introMs = app.repository.introSkipMsFor(episodeId)
-        val resumeMs = when (reason) {
-            Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK ->
-                app.repository.episode(episodeId)?.resumeStartMs() ?: 0L
-            else -> 0L // explicit play() already passed the start position
-        }
-        val target = maxOf(introMs, resumeMs)
-        if (target > 0 && player.currentPosition < target &&
-            player.currentMediaItem?.mediaId == mediaItem.mediaId
-        ) {
-            PlaybackJournal.log(
-                "raise",
-                "ep=$episodeId reason=$reason from=${player.currentPosition} to=$target"
-            )
-            player.seekTo(target)
         }
 
         maybeRefillStation(episodeId)
