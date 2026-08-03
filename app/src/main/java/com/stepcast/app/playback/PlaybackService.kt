@@ -451,20 +451,33 @@ class PlaybackService : MediaLibraryService() {
             serviceScope.future {
                 val prefs = getSharedPreferences(StepcastWidget.PREFS, MODE_PRIVATE)
                 val lastId = prefs.getLong(StepcastWidget.KEY_EPISODE_ID, -1L)
+                // one fetch, reused below — this runs on a cold process (the
+                // whole reason resumption exists), and a second identical
+                // query only stretches a start the user is actively waiting
+                // on with their finger already off the widget
+                val queue = app.repository.queueSnapshot()
                 // never resume a finished episode, and honor streaming-off:
                 // fall through to the first playable queued episode instead
                 val episode = lastId.takeIf { it > 0 }
                     ?.let { app.repository.episode(it) }
                     ?.takeIf { !it.played && app.repository.playableUri(it) != null }
-                    ?: app.repository.queueSnapshot()
-                        .firstOrNull { app.repository.playableUri(it) != null }
+                    ?: queue.firstOrNull { app.repository.playableUri(it) != null }
                     ?: throw UnsupportedOperationException("nothing to resume")
-                val tail = app.repository.queueSnapshot().filter {
+                val tail = queue.filter {
                     it.id != episode.id && app.repository.playableUri(it) != null
                 }
+                // batched, not one podcast lookup per episode: a long queue
+                // is usually a handful of shows repeated many times over,
+                // and on a cold DB connection N sequential round-trips is
+                // exactly the kind of delay that makes a widget tap look
+                // like it did nothing — this was almost certainly why
+                // resuming after a long idle period could silently fail
+                val podcastsById = app.repository
+                    .podcastsByIds((listOf(episode) + tail).map { it.podcastId })
+                    .associateBy { it.id }
                 val items = buildList {
-                    add(episodeToItem(episode))
-                    tail.forEach { add(episodeToItem(it)) }
+                    add(episodeToItem(episode, podcastsById[episode.podcastId]))
+                    tail.forEach { add(episodeToItem(it, podcastsById[it.podcastId])) }
                 }
                 val startMs = episode.resumeStartMs()
                 PlaybackJournal.log(

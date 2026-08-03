@@ -21,6 +21,11 @@ interface PodcastDao {
     @Query("SELECT * FROM podcasts WHERE id = :id")
     suspend fun get(id: Long): Podcast?
 
+    /** Batch lookup — building a playlist from N queued episodes must not
+     *  cost N separate round-trips for their (often-repeated) shows. */
+    @Query("SELECT * FROM podcasts WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Long>): List<Podcast>
+
     @Query("SELECT * FROM podcasts WHERE feedUrl = :feedUrl")
     suspend fun getByFeedUrl(feedUrl: String): Podcast?
 

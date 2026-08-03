@@ -41,6 +41,9 @@ class PodcastRepository(
 
     suspend fun podcast(podcastId: Long) = db.podcastDao().get(podcastId)
 
+    suspend fun podcastsByIds(ids: Collection<Long>): List<Podcast> =
+        if (ids.isEmpty()) emptyList() else db.podcastDao().getByIds(ids.distinct())
+
     suspend fun episode(id: Long) = db.episodeDao().get(id)
 
     suspend fun episodesNewestFirst(podcastId: Long, limit: Int = 100): List<Episode> =
