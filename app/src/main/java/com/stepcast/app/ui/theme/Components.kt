@@ -109,7 +109,11 @@ fun ArtworkOrFolder(
             model = imageUrl,
             contentDescription = contentDescription,
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            modifier = modifier
+            // a neutral tile while the image loads — AsyncImage paints
+            // nothing of its own until the bitmap resolves, so without
+            // this the tile is bare empty space (worse than a visible
+            // loading state, and the FIRST thing every list/grid shows)
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
         )
     }
 }
