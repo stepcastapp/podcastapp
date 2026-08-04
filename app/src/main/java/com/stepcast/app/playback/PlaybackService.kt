@@ -47,6 +47,45 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
+ * Hands MediaSession/notification artwork lookups to Coil's shared
+ * ImageLoader instead of Media3's built-in loader. The system lock-screen
+ * card, notification, and QS media output all ask THIS for a Bitmap — with
+ * the default loader that's an unmemoized, no-retry network fetch, so a
+ * shaky connection leaves those surfaces blank even when the in-app player
+ * (also Coil, same URL) already has it cached from browsing.
+ */
+@UnstableApi
+private class CoilBitmapLoader(
+    private val context: android.content.Context,
+    private val scope: CoroutineScope
+) : androidx.media3.common.util.BitmapLoader {
+    // podcast/episode artwork is always a raster image (feeds don't send
+    // SVG or anything Coil can't already decode) — every raster type
+    // qualifies, so this loader never has to defer to a different one
+    override fun supportsMimeType(mimeType: String): Boolean = mimeType.startsWith("image/")
+
+    override fun decodeBitmap(data: ByteArray): ListenableFuture<android.graphics.Bitmap> =
+        scope.future(Dispatchers.Default) {
+            android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size)
+                ?: throw IllegalArgumentException("Could not decode artwork bytes")
+        }
+
+    override fun loadBitmap(uri: Uri): ListenableFuture<android.graphics.Bitmap> =
+        scope.future(Dispatchers.IO) {
+            val request = coil.request.ImageRequest.Builder(context)
+                .data(uri)
+                // this bitmap crosses into the system UI process — a
+                // HARDWARE bitmap can't be parcelled across that boundary
+                .allowHardware(false)
+                .build()
+            val result = coil.Coil.imageLoader(context).execute(request)
+            val drawable = (result as? coil.request.SuccessResult)?.drawable
+                ?: throw java.io.IOException("Coil failed to load artwork: $uri")
+            (drawable as android.graphics.drawable.BitmapDrawable).bitmap
+        }
+}
+
+/**
  * Media3 playback service. MediaSessionService gives us the media
  * notification, lock-screen card, QS output/media carousel and
  * Bluetooth/headset routing for free.
@@ -201,6 +240,15 @@ class PlaybackService : MediaLibraryService() {
         )
         mediaSession = MediaLibrarySession.Builder(this, player, LibraryCallback())
             .setSessionActivity(sessionActivity)
+            // Media3's default artwork loader does its own bare network
+            // fetch for the lock-screen/notification card — no caching, no
+            // retries. On a bad connection that leaves the system card
+            // blank even when the in-app player (Coil, same URL, often
+            // already cached from browsing) shows it fine. Routing through
+            // Coil's shared loader means the system card usually gets an
+            // instant cache hit, and falls back to Coil's sturdier client
+            // instead of Media3's minimal one.
+            .setBitmapLoader(CoilBitmapLoader(this, serviceScope))
             .build()
 
         // brand the status-bar icon with the stairstep silhouette
