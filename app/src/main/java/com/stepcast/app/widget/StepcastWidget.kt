@@ -670,10 +670,11 @@ private fun EmptyWidget(opacity: Int) {
  * on-device). The Android 12+ problem that originally forced the activity
  * trampoline — launcher PendingIntents carry no FGS allowlist, so a play
  * from a background callback can't promote the service — is solved inside
- * [PlayPauseAction] instead: PAUSE goes through the bound controller
- * (never needs FGS), and PLAY is dispatched as a system media key, the
- * same pipeline Bluetooth buttons use, which carries the FGS exemption
- * and revives a dead session via playback resumption.
+ * [PlayPauseAction] instead: every command goes through the bound
+ * controller, targeted at our own session. PAUSE never needs FGS; PLAY
+ * reaches playback resumption on a dead session all the same (see
+ * [resumeStepcastPlayback]), with the old global media key demoted to a
+ * fallback for the case where the system refuses the targeted start.
  */
 class PlayPauseAction : ActionCallback {
     override suspend fun onAction(
@@ -682,7 +683,9 @@ class PlayPauseAction : ActionCallback {
         parameters: ActionParameters
     ) {
         var startedPlay = false
-        sendPlayerCommand(context) { controller ->
+        // 2s hold: a cold play resolves through onPlaybackResumption, which
+        // rebuilds the queue from disk before playback starts
+        sendPlayerCommand(context, holdMs = 2_000) { controller ->
             if (controller.isPlaying) {
                 controller.pause()
             } else {
@@ -706,9 +709,28 @@ class PlayPauseAction : ActionCallback {
                 actuallyPlaying = controller.isPlaying
             }
             if (!actuallyPlaying) {
-                // the direct evidence for "widget play did nothing"
+                // last resort: the old global media-key route. It can be
+                // stolen by whatever app most recently held a session (the
+                // reason it is no longer the primary path), but if the
+                // targeted play was refused outright — e.g. a background
+                // foreground-service start the system declined — the key's
+                // system pipeline carries an exemption that our own bound
+                // controller does not.
                 com.stepcast.app.data.PlaybackJournal.log(
-                    "mediakey", "play dispatched but not playing after 1.5s"
+                    "widget", "controller play didn't start; falling back to media key"
+                )
+                dispatchPlayMediaKey(context)
+                kotlinx.coroutines.delay(1_500)
+                sendPlayerCommand(context) { controller ->
+                    actuallyPlaying = controller.isPlaying
+                }
+            }
+            if (!actuallyPlaying) {
+                // the direct evidence for "widget play did nothing" — by
+                // here BOTH the targeted controller play and the media-key
+                // fallback have been tried and neither produced playback
+                com.stepcast.app.data.PlaybackJournal.log(
+                    "mediakey", "play failed: controller and media key both did nothing"
                 )
                 prefs.edit().putBoolean(StepcastWidget.KEY_PLAYING, false).apply()
                 runCatching { updateAllStepcastWidgets(context) }
@@ -718,34 +740,39 @@ class PlayPauseAction : ActionCallback {
 }
 
 /**
- * Starts playback targeted at STEPCAST. When our session is alive with an
- * episode loaded, resume it through the bound controller — the global
- * media-key route delivers to the MOST RECENT media session, and after
- * playing anything in another app that isn't ours (a widget play tap was
- * resuming the other app's paused media). The media key remains only for
- * a dead session, where the controller has nothing to resume and the
- * system pipeline — with its FGS exemption and playback-resumption
- * revival — is the one way back to life.
+ * Starts playback targeted at STEPCAST — in BOTH the warm and cold cases.
+ *
+ * A global media key goes to whichever media session the system saw most
+ * recently, which is not necessarily ours: anything else that took audio
+ * focus in the meantime (see the "suppress transient-focus-loss" journal
+ * tag) steals the key, and our play silently does nothing. That was already
+ * fixed for a live session; the DEAD-session case still fell back to the
+ * global key and so still lost the race.
+ *
+ * It turns out the key was never needed. Media3 routes a controller's
+ * play() on an EMPTY timeline into
+ * MediaLibrarySession.Callback.onPlaybackResumption — the very callback
+ * that rebuilds the queue from disk — so a plain play() on our own bound
+ * controller reaches the same revival path the media key was chasing,
+ * addressed straight at our session where nothing can intercept it.
  */
 internal fun resumeStepcastPlayback(context: Context, controller: MediaController) {
-    if (controller.currentMediaItem != null) {
-        com.stepcast.app.data.PlaybackJournal.log(
-            "widget", "play via controller (session alive)"
-        )
-        controller.play()
-    } else {
-        dispatchPlayMediaKey(context)
-    }
+    val cold = controller.currentMediaItem == null
+    com.stepcast.app.data.PlaybackJournal.log(
+        "widget", if (cold) "play via controller (cold, expect resume)" else "play via controller"
+    )
+    controller.play()
 }
 
 /**
- * Starts playback by injecting KEYCODE_MEDIA_PLAY into the system media-key
- * pipeline: the FGS-exempt route that revives a DEAD session via playback
- * resumption. Global routing is the trade-off — the system delivers it to
- * the most recent media session, not necessarily ours — so callers with a
- * live session must use [resumeStepcastPlayback] instead. Plain PLAY, not
- * PLAY_PAUSE: if another app holds media-key priority while playing, PLAY
- * is a no-op there instead of pausing it.
+ * FALLBACK ONLY — prefer [resumeStepcastPlayback]. Injects
+ * KEYCODE_MEDIA_PLAY into the system media-key pipeline, whose FGS
+ * exemption can start playback where a background-initiated one is
+ * refused. The trade-off is global routing: the system hands the key to
+ * the most recent media session, which is ours only if nothing else has
+ * taken audio focus since — the observed cause of widget taps silently
+ * doing nothing. Plain PLAY, not PLAY_PAUSE, so a misrouted key is a
+ * no-op in an already-playing app instead of pausing it.
  */
 internal fun dispatchPlayMediaKey(context: Context) {
     com.stepcast.app.data.PlaybackJournal.log("mediakey", "dispatch PLAY")
@@ -795,6 +822,7 @@ class DoneDeleteAction : ActionCallback {
 // (main) — so the whole command sequence hops to Main or no button works.
 private suspend fun sendPlayerCommand(
     context: Context,
+    holdMs: Long = 300,
     command: (MediaController) -> Unit
 ) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
     try {
@@ -807,7 +835,13 @@ private suspend fun sendPlayerCommand(
             .await()
         try {
             command(controller)
-            delay(300) // let the command dispatch before releasing the controller
+            // let the command dispatch before releasing the controller.
+            // A cold play needs much longer than a transport tap: it lands
+            // in onPlaybackResumption, which reads the episode and the whole
+            // queue off disk before playback can begin, and dropping the
+            // last bound controller mid-rebuild risks the service being
+            // torn down before it ever reaches play.
+            delay(holdMs)
         } finally {
             controller.release()
         }

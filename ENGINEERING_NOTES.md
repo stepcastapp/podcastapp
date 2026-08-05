@@ -64,16 +64,28 @@ build or one confused on-device session.
   a misrouted key is a no-op in an already-playing app instead of
   pausing it. SmartPlay starts have no media-key equivalent and stay on
   the trampoline (they may prompt for unlock from the lock screen).
-- **The media key routes globally — target the play when the session is
-  alive.** The system delivers a dispatched media key to the MOST RECENT
-  media session, and after watching a video elsewhere that isn't ours: a
-  widget play tap resumed the other app's paused media (field report).
-  `resumeStepcastPlayback` therefore plays through the bound controller
-  whenever our session has a current item (targeted, and the service is
-  still started so no fresh FGS grant is needed), and falls back to the
-  media key ONLY for a dead session, where global routing is the price
-  of the resumption revival. The 1.5s reconcile + journal line
-  ("play via controller" vs "dispatch PLAY") records which path ran.
+- **The media key routes globally — never make it the primary path.**
+  The system delivers a dispatched media key to the MOST RECENT media
+  session, which is ours only if nothing else has taken audio focus
+  since. Two field reports came from this: a widget tap resuming another
+  app's paused media, and (subtler) widget taps doing nothing at all
+  ~13min after a `suppress transient-focus-loss` — the key went to
+  whatever grabbed focus, so our `onPlaybackResumption` never ran and
+  the journal showed `dispatch PLAY` with no matching `resume`.
+  The key turned out to be unnecessary even for a DEAD session:
+  Media3 routes a controller's `play()` on an empty timeline into
+  `MediaLibrarySession.Callback.onPlaybackResumption` (see
+  `MediaSessionImpl.handleMediaControllerPlayRequest` — the branch needs
+  only an empty timeline plus `COMMAND_SET_MEDIA_ITEM`/
+  `COMMAND_CHANGE_MEDIA_ITEMS`, NOT the media-notification controller).
+  So `resumeStepcastPlayback` always plays through our own bound
+  controller, and the global key is a fallback fired only if the
+  targeted play produced no playback (covering an FGS refusal, which
+  the key's system pipeline is exempt from). A cold play holds the
+  controller 2s, not 300ms — resumption reads the episode and queue off
+  disk first, and dropping the last binder mid-rebuild can tear the
+  service down before it reaches play. Journal: "play via controller
+  (cold, expect resume)" should be followed by a `resume` line.
 - **Responsive shrinking.** `SizeMode.Responsive` breakpoints keep the
   play/pause button alive as the bar widget shrinks (text drops <200dp,
   art drops <110dp); `minResizeWidth=40dp` allows 1-cell. Launchers cache
