@@ -10,6 +10,7 @@ import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -83,6 +84,39 @@ private class CoilBitmapLoader(
                 ?: throw java.io.IOException("Coil failed to load artwork: $uri")
             (drawable as android.graphics.drawable.BitmapDrawable).bitmap
         }
+}
+
+/**
+ * ExoPlayer only reports COMMAND_SEEK_TO_NEXT / COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
+ * as available when [hasNextMediaItem] is true — unlike seek-to-previous,
+ * which can always fall back to restarting the current item and so has no
+ * such restriction. With nothing queued after the current episode, that
+ * left Bluetooth's "skip forward" reporting itself as unavailable to AVRCP:
+ * the request never even reached [MediaSession.Callback.onPlayerCommandRequest],
+ * while "skip back" — always available — worked fine.
+ *
+ * Force both commands to always report available so the request always
+ * gets through to that callback. This has no effect on real queue
+ * navigation: [LibraryCallback.onPlayerCommandRequest] intercepts both
+ * commands for the media-notification controller and performs
+ * [Player.seekForward]/[Player.seekBack] itself, so the real
+ * seekToNext()/seekToNextMediaItem() implementation — the one that
+ * actually depends on there being a next item — is never invoked for
+ * Bluetooth. Other controllers (the app's own "next episode" control) are
+ * unaffected either way, since ExoPlayer's own seekToNextMediaItem() is
+ * already a safe no-op when there's nothing to advance to.
+ */
+private class AlwaysSkippableForwardingPlayer(player: Player) : ForwardingPlayer(player) {
+    override fun getAvailableCommands(): Player.Commands =
+        super.getAvailableCommands().buildUpon()
+            .add(Player.COMMAND_SEEK_TO_NEXT)
+            .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+            .build()
+
+    override fun isCommandAvailable(command: Int): Boolean =
+        command == Player.COMMAND_SEEK_TO_NEXT ||
+                command == Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM ||
+                super.isCommandAvailable(command)
 }
 
 /**
@@ -238,7 +272,9 @@ class PlaybackService : MediaLibraryService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        mediaSession = MediaLibrarySession.Builder(this, player, LibraryCallback())
+        mediaSession = MediaLibrarySession.Builder(
+            this, AlwaysSkippableForwardingPlayer(player), LibraryCallback()
+        )
             .setSessionActivity(sessionActivity)
             // Media3's default artwork loader does its own bare network
             // fetch for the lock-screen/notification card — no caching, no
@@ -465,26 +501,73 @@ class PlaybackService : MediaLibraryService() {
             // the session, ignoring notification actions. To make them match
             // the in-app pill we hand the media-notification controller
             // button preferences with EXPLICIT slots — back left of play,
-            // forward right of play, done right of forward — and hide
-            // prev/next so nothing competes for those slots. Other
-            // controllers (app UI, Bluetooth, Auto) keep full commands.
+            // forward right of play, done right of forward. That explicit
+            // button list is what keeps prev/next off the rendered
+            // notification/system UI — it does NOT require removing the
+            // underlying player commands.
+            //
+            // IMPORTANT: this same controller's Player.Commands also back
+            // the PlaybackState actions bitmask that Bluetooth/AVRCP reads
+            // to decide whether the hardware "skip" buttons do anything.
+            // Previously COMMAND_SEEK_TO_NEXT/PREVIOUS were stripped here to
+            // keep them off the notification, which had the side effect of
+            // telling every AVRCP-connected device that skip wasn't
+            // available — breaking the Bluetooth skip buttons. Keep the
+            // default player commands intact; only the button *layout*
+            // (mediaButtonPreferences) is restricted.
             if (session.isMediaNotificationController(controller)) {
-                val playerCommands =
-                    MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
-                        .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
-                        .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-                        .remove(Player.COMMAND_SEEK_TO_NEXT)
-                        .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-                        .build()
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                     .setAvailableSessionCommands(sessionCommands)
-                    .setAvailablePlayerCommands(playerCommands)
                     .setMediaButtonPreferences(mediaNotificationButtons())
                     .build()
             }
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(sessionCommands)
                 .build()
+        }
+
+        /**
+         * Hardware "skip" buttons — Bluetooth AVRCP, wired headset, car
+         * head units — arrive as Player.COMMAND_SEEK_TO_NEXT/PREVIOUS on the
+         * media-notification controller (the same controller Android routes
+         * all physical media-button events through; there's no separate
+         * "Bluetooth controller"). Left as-is, that makes a Bluetooth skip
+         * press jump to the next/previous EPISODE (or restart the current
+         * one), which isn't what a "skip 30s" button on a headset should do.
+         *
+         * Remap to the actual seek-forward/back commands here, so the same
+         * physical press instead moves within the current episode — matching
+         * the in-app pill's seek buttons. This only applies to the
+         * media-notification controller: the app's own "next episode"
+         * control (ACTION_NEXT/ACTION_PREVIOUS in CommandReceiver, via the
+         * app's own MediaController) is a different controller and is
+         * unaffected, so real episode navigation still works from the UI.
+         */
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            @Player.Command playerCommand: Int
+        ): Int {
+            // NOTE: the returned Int is NOT "run this command instead" — it's
+            // checked against playerCommand, and a mismatch just denies the
+            // request rather than substituting a different call. So the
+            // actual seek has to happen HERE, and RESULT_INFO_SKIPPED tells
+            // Media3 "already handled, don't also run the original command."
+            if (session.isMediaNotificationController(controller)) {
+                when (playerCommand) {
+                    Player.COMMAND_SEEK_TO_NEXT,
+                    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+                        session.player.seekForward()
+                        return SessionResult.RESULT_INFO_SKIPPED
+                    }
+                    Player.COMMAND_SEEK_TO_PREVIOUS,
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+                        session.player.seekBack()
+                        return SessionResult.RESULT_INFO_SKIPPED
+                    }
+                }
+            }
+            return super.onPlayerCommandRequest(session, controller, playerCommand)
         }
 
         /**
