@@ -367,6 +367,7 @@
     <string name="listen_from_stamp">Listen from %1$s: %2$s</string>
     <string name="listen_from_stamp_local">Listening at %1$s (local file)</string>
     <string name="share_episode">Share episode</string>
+    <string name="share_podcast">Share podcast</string>
     <string name="backup_saved">Backup saved.</string>
     <string name="backup_failed">Backup failed: %1$s</string>
     <string name="restore_summary">Restored %1$d feeds, %2$d categories, %3$d SmartPlays, and your settings. Episodes are being fetched.</string>

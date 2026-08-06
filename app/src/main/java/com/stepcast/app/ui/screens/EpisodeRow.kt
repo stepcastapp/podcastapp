@@ -62,7 +62,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import com.stepcast.app.R
 import androidx.compose.ui.unit.dp
-import androidx.core.text.HtmlCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.stepcast.app.data.AppSettings
@@ -635,20 +634,7 @@ fun EpisodeDetailsDialog(
 ) {
     val noNotes = stringResource(R.string.no_show_notes)
     val notes = remember(episode.id) {
-        // Many feeds (Mixcloud/SoundCloud-style tracklists especially) rely
-        // on bare newlines for line breaks instead of <br>/<p> — but HTML
-        // parsing correctly collapses raw \n into ordinary whitespace per
-        // spec, so a plain fromHtml() call flattens the whole description
-        // into one run-on paragraph. Promoting literal newlines to <br>
-        // first means both real HTML breaks AND bare-newline breaks survive.
-        val withExplicitBreaks = episode.description.replace(Regex("\r\n|\r|\n"), "<br>")
-        HtmlCompat.fromHtml(withExplicitBreaks, HtmlCompat.FROM_HTML_MODE_COMPACT)
-            .toString()
-            // collapse the rare over-insertion (a source <br> immediately
-            // followed by its own literal newline) into a normal paragraph gap
-            .replace(Regex("\n{3,}"), "\n\n")
-            .trim()
-            .ifEmpty { noNotes }
+        com.stepcast.app.ui.feedHtmlToText(episode.description).ifEmpty { noNotes }
     }
     AlertDialog(
         onDismissRequest = onDismiss,

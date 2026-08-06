@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,6 +83,7 @@ fun PodcastPreviewScreen(
     var retryNonce by remember { mutableStateOf(0) }
     var categoryPromptFor by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val subscribeFailedMsg = stringResource(R.string.subscribe_failed)
 
     LaunchedEffect(feedUrl, retryNonce) {
@@ -206,13 +209,39 @@ fun PodcastPreviewScreen(
                             }
                         }
                     }
+                    // the feed URL is the portable handle for a show — any
+                    // podcast app can open it, so it works for people who
+                    // don't have Stepcast
+                    IconButton(onClick = {
+                        val send = android.content.Intent(
+                            android.content.Intent.ACTION_SEND
+                        ).setType("text/plain").putExtra(
+                            android.content.Intent.EXTRA_TEXT,
+                            "${loaded.title}\n$feedUrl"
+                        )
+                        context.startActivity(
+                            android.content.Intent.createChooser(
+                                send, context.getString(R.string.share_podcast)
+                            )
+                        )
+                    }) {
+                        Icon(
+                            Icons.Rounded.Share,
+                            contentDescription = stringResource(R.string.share_podcast),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
-            if (loaded.description.isNotBlank()) {
+            // feeds put HTML in <description>; render it as text, not markup
+            val descriptionText = remember(loaded.description) {
+                com.stepcast.app.ui.feedHtmlToText(loaded.description)
+            }
+            if (descriptionText.isNotBlank()) {
                 var expanded by remember { mutableStateOf(false) }
                 Text(
-                    loaded.description.trim(),
+                    descriptionText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = if (expanded) Int.MAX_VALUE else 3,
