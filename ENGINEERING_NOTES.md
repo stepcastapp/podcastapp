@@ -17,6 +17,19 @@ build or one confused on-device session.
   precision tool (planned wake-up at the earliest next promise) but they
   can be deferred/dropped; the hourly tick is the safety net that
   guarantees eventual convergence. Never remove one for the other.
+- **Scheduling has its own journal channel.** "Updates behave strangely"
+  is an overnight story, and refresh events sharing the playback channel
+  would be evicted by the 5-second position ticks long before anyone
+  shared the file — so `PlaybackJournal.logSchedule` writes a separate,
+  much quieter pair of files (96 KB x2, weeks of history) that
+  `snapshot()` emits ahead of the playback section. What it records per
+  run: trigger + due/total + quiet-hours/checkpoint config, one line per
+  feed that ACTUALLY gained episodes (never per-feed "nothing new" — a
+  300-feed library would bury the signal), one per failure with its
+  message, the notify verdict, and the planned next wake-up with the
+  podcast and `ScheduleEngine.Reason` that won it. The notify verdict
+  re-checks POST_NOTIFICATIONS itself so it can never claim "posted"
+  for an alert the OS dropped.
 
 ## Glance widgets
 

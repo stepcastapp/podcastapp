@@ -22,6 +22,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.stepcast.app.R
 import com.stepcast.app.StepcastApplication
+import com.stepcast.app.data.PlaybackJournal
 import com.stepcast.app.ui.MainActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -45,6 +46,7 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         // replan-only run (schedule edited): recompute the precise wake-up
         // without fetching anything
         if (inputData.getBoolean(KEY_PLAN_ONLY, false)) {
+            PlaybackJournal.logSchedule("run", "plan-only (schedule edited)")
             planNextCheck(app)
             return@withContext Result.success()
         }
@@ -85,6 +87,16 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
                 cfg = cfg
             )
         }
+        val trigger = when {
+            categoryIds != null -> "category=" + inputData.getString(KEY_CATEGORY)
+            force -> "forced"
+            else -> "scheduled"
+        }
+        PlaybackJournal.logSchedule(
+            "run",
+            "$trigger due=${due.size}/${all.size} quiet=${cfg.quietEnabled} " +
+                "checkpoints=${cfg.checkpointMinutes.joinToString("/") { minutesLabel(it) }}"
+        )
         // parallel fetch, BOUNDED: a big library refreshes fast, but a
         // 300-feed library must not open 300 sockets/parsers at once —
         // unbounded parallelism crash-looped large installs
@@ -94,7 +106,22 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
                 async {
                     gate.withPermit {
                         runCatching { app.repository.refresh(podcast.id) }
-                            .getOrElse {
+                            .onSuccess { added ->
+                                // only the feeds that actually moved — a
+                                // 300-feed library would otherwise bury the
+                                // signal under 300 "nothing new" lines
+                                if (added > 0) {
+                                    PlaybackJournal.logSchedule(
+                                        "feed", "+$added ${podcast.title}"
+                                    )
+                                }
+                            }
+                            .getOrElse { failure ->
+                                PlaybackJournal.logSchedule(
+                                    "feed-fail",
+                                    "${podcast.title}: " +
+                                        (failure.message ?: failure.javaClass.simpleName)
+                                )
                                 app.repository.recordRefreshFailure(podcast.id)
                                 failuresThisRun.incrementAndGet()
                                 0
@@ -108,11 +135,27 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         // "random notifications throughout the day" — with only-at-checkpoints
         // on (default), release-window and baseline checks stay silent and
         // alerts batch up near the user's Fresh-by times
-        if (newCount > 0 && inputData.getBoolean(KEY_NOTIFY, true) &&
-            com.stepcast.app.data.AppSettings.newEpisodeNotifications &&
-            (!com.stepcast.app.data.AppSettings.notifyOnlyAtCheckpoints ||
-                nearCheckpoint(cfg))
-        ) {
+        val settings = com.stepcast.app.data.AppSettings
+        val wantsNotify = inputData.getBoolean(KEY_NOTIFY, true)
+        val atCheckpoint = nearCheckpoint(cfg)
+        // spell out WHICH gate swallowed an alert — "I never got told about
+        // new episodes" has four different causes and they look identical
+        // from the outside
+        val notifyVerdict = when {
+            newCount == 0 -> "nothing new"
+            !wantsNotify -> "suppressed: silent refresh"
+            !settings.newEpisodeNotifications -> "suppressed: notifications off"
+            settings.notifyOnlyAtCheckpoints && !atCheckpoint ->
+                "suppressed: not near a checkpoint"
+            // checked HERE as well as inside the post, so the journal can
+            // never claim "posted" for an alert the OS actually dropped
+            !notificationsPermitted() -> "suppressed: permission denied"
+            else -> "posted"
+        }
+        PlaybackJournal.logSchedule(
+            "notify", "$notifyVerdict new=$newCount shows=${updatedPodcasts.size}"
+        )
+        if (notifyVerdict == "posted") {
             postNewEpisodesNotification(newCount, updatedPodcasts)
         }
         // the hourly periodic tick is only the safety net — plan a precise
@@ -138,31 +181,48 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
     ) {
         val cfg = scheduleConfig()
         val now = System.currentTimeMillis()
-        val next = app.repository.allPodcasts().mapNotNull { podcast ->
+        // keep the winning podcast/reason, not just the time — "why is it
+        // waking at 3am" is unanswerable from a bare timestamp
+        var winner: Triple<Long, String, ScheduleEngine.Reason>? = null
+        for (podcast in app.repository.allPodcasts()) {
             val expectedMs = if (expectedCache != null) {
                 expectedCache[podcast.id]
             } else {
                 expectedReleaseFor(app, podcast)
             }
-            val candidate = ScheduleEngine.nextCheck(
+            val check = ScheduleEngine.nextCheck(
                 mode = podcast.scheduleMode,
                 param = podcast.scheduleParam,
                 lastRefreshedMs = podcast.lastRefreshed,
                 expectedReleaseMs = expectedMs,
                 nowMs = now,
                 cfg = cfg
-            )?.timeMs
+            ) ?: continue
             // a feed that keeps failing never advances lastRefreshed, so its
             // stale "overdue" candidate would pin the planner to the 5-minute
             // floor forever — a hammering retry loop against a dead URL.
             // Back it off to hourly until a refresh succeeds.
-            if (candidate != null && podcast.consecutiveFailures >= 3) {
-                candidate.coerceAtLeast(now + 3_600_000L)
+            val timeMs = if (podcast.consecutiveFailures >= 3) {
+                check.timeMs.coerceAtLeast(now + 3_600_000L)
             } else {
-                candidate
+                check.timeMs
             }
-        }.minOrNull() ?: return
-        val delayMs = (next - now).coerceIn(5 * 60_000L, 6 * 3_600_000L)
+            val best = winner
+            if (best == null || timeMs < best.first) {
+                winner = Triple(timeMs, podcast.title, check.reason)
+            }
+        }
+        val won = winner
+        if (won == null) {
+            PlaybackJournal.logSchedule("plan", "no feed wants a check (all manual?)")
+            return
+        }
+        val delayMs = (won.first - now).coerceIn(5 * 60_000L, 6 * 3_600_000L)
+        PlaybackJournal.logSchedule(
+            "plan",
+            "next in ${delayMs / 60_000}min at ${clockLabel(now + delayMs)} " +
+                "(${won.third} · ${won.second})"
+        )
         val request = OneTimeWorkRequestBuilder<RefreshWorker>()
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .setConstraints(
@@ -175,6 +235,20 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
             "feed-refresh-planned", ExistingWorkPolicy.REPLACE, request
         )
     }
+
+    private fun notificationsPermitted(): Boolean =
+        Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
+            applicationContext, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+
+    /** "6:30" from minutes-after-midnight, for readable journal lines. */
+    private fun minutesLabel(minutes: Int): String =
+        "%d:%02d".format(minutes / 60, minutes % 60)
+
+    /** Wall-clock "HH:mm" for an absolute time, in the device's zone. */
+    private fun clockLabel(timeMs: Long): String =
+        java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+            .format(java.util.Date(timeMs))
 
     /** True within 45 minutes after any enabled checkpoint slot. */
     private fun nearCheckpoint(cfg: ScheduleEngine.Config): Boolean {
