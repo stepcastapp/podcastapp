@@ -370,7 +370,7 @@
     <string name="share_podcast">Share podcast</string>
     <string name="save_episode_cd">Save %1$s for offline</string>
     <string name="episode_saved_to_up_next">Saved — downloading to Up Next</string>
-    <string name="couldnt_save_episode">Couldn't save that episode</string>
+    <string name="couldnt_save_episode">Couldn\'t save that episode</string>
     <string name="saved_episodes">Saved episodes</string>
     <string name="backup_saved">Backup saved.</string>
     <string name="backup_failed">Backup failed: %1$s</string>
