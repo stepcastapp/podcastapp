@@ -180,7 +180,7 @@ fun SettingsScreen(
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             val xml = Opml.serialize(
-                repository.allPodcasts(),
+                repository.subscribedPodcastList(),
                 repository.podcastCategoryList()
                     .groupBy({ it.podcastId }, { it.category })
             )

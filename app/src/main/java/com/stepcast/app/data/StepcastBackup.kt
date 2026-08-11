@@ -71,7 +71,7 @@ object StepcastBackup {
 
         val podcastsById = HashMap<Long, Podcast>()
         val podcasts = JSONArray()
-        for (podcast in repository.allPodcasts()) {
+        for (podcast in repository.subscribedPodcastList()) {
             podcastsById[podcast.id] = podcast
             if (podcast.localFolderUri != null) continue // SAF grants don't transfer
             podcasts.put(

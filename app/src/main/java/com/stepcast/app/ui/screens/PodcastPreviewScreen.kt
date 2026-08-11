@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Share
@@ -50,6 +51,7 @@ import coil.compose.AsyncImage
 import com.stepcast.app.R
 import com.stepcast.app.data.ParsedFeed
 import com.stepcast.app.data.PodcastRepository
+import com.stepcast.app.download.DownloadWorker
 import com.stepcast.app.ui.PlayerConnection
 import com.stepcast.app.ui.theme.EmptyState
 import com.stepcast.app.ui.theme.StepMark
@@ -84,7 +86,13 @@ fun PodcastPreviewScreen(
     var categoryPromptFor by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // audioUrl of the episode currently being saved; the save buttons go
+    // inert for the moment it takes, so an impatient double-tap can't
+    // enqueue the same download twice
+    var saving by remember { mutableStateOf<String?>(null) }
     val subscribeFailedMsg = stringResource(R.string.subscribe_failed)
+    val savedMsg = stringResource(R.string.episode_saved_to_up_next)
+    val saveFailedMsg = stringResource(R.string.couldnt_save_episode)
 
     LaunchedEffect(feedUrl, retryNonce) {
         error = null
@@ -319,6 +327,41 @@ fun PodcastPreviewScreen(
                             }
                         }
                         if (ep.audioUrl.isNotEmpty()) {
+                            // keep just this one, no subscription: streaming
+                            // already worked here, but there was no way to
+                            // take an episode offline without taking the
+                            // whole feed with it
+                            IconButton(
+                                enabled = saving == null,
+                                onClick = {
+                                    saving = ep.audioUrl
+                                    scope.launch {
+                                        val id = runCatching {
+                                            repository.saveEpisodeWithoutSubscribing(
+                                                feedUrl, loaded, ep
+                                            )
+                                        }.getOrDefault(0L)
+                                        if (id > 0) {
+                                            DownloadWorker.start(context, id)
+                                            repository.addToQueueLast(id)
+                                        }
+                                        saving = null
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            if (id > 0) savedMsg else saveFailedMsg,
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Download,
+                                    contentDescription = stringResource(
+                                        R.string.save_episode_cd, ep.title
+                                    ),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                             IconButton(onClick = {
                                 player.playPreview(
                                     title = ep.title,

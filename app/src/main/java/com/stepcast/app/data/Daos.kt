@@ -15,6 +15,19 @@ interface PodcastDao {
     @Query("SELECT * FROM podcasts ORDER BY title COLLATE NOCASE")
     suspend fun listAll(): List<Podcast>
 
+    // observeAll/listAll above deliberately include UNSUBSCRIBED shows:
+    // Up Next, Downloads and History resolve an episode's title/artwork
+    // through them, and a saved episode's show must still be found. The
+    // two below are for surfaces that mean "my library".
+    @Query("SELECT * FROM podcasts WHERE subscribed = 1 ORDER BY title COLLATE NOCASE")
+    fun observeSubscribed(): Flow<List<Podcast>>
+
+    @Query("SELECT * FROM podcasts WHERE subscribed = 1 ORDER BY title COLLATE NOCASE")
+    suspend fun listSubscribed(): List<Podcast>
+
+    @Query("UPDATE podcasts SET subscribed = 1 WHERE id = :id")
+    suspend fun markSubscribed(id: Long)
+
     @Query("SELECT * FROM podcasts WHERE id = :id")
     fun observe(id: Long): Flow<Podcast?>
 

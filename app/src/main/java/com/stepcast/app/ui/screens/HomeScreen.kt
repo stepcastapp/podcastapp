@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Podcasts
@@ -360,8 +361,12 @@ private fun PodcastGrid(
     onRefreshCategory: (String) -> Unit
 ) {
     val orderIndex = categoryOrder.withIndex().associate { (i, name) -> name to i }
+    // shows kept only to hold a one-off saved episode are NOT part of the
+    // library proper — they get their own section at the bottom rather
+    // than sitting in categories, "Other podcasts", or the repair list
+    val (library, savedOnly) = podcasts.partition { it.subscribed }
     // membership-driven: a podcast shows under EVERY category it's in
-    val podcastsById = podcasts.associateBy { it.id }
+    val podcastsById = library.associateBy { it.id }
     val byCategory = memberships
         .groupBy({ it.category }, { it.podcastId })
         .mapValues { (_, ids) ->
@@ -376,7 +381,7 @@ private fun PodcastGrid(
             )
         )
     val categorizedIds = memberships.mapTo(HashSet()) { it.podcastId }
-    val uncategorized = podcasts.filter { it.id !in categorizedIds }
+    val uncategorized = library.filter { it.id !in categorizedIds }
 
     val context = LocalContext.current
     val collapsed = com.stepcast.app.data.AppSettings.collapsedCategories
@@ -528,7 +533,7 @@ private fun PodcastGrid(
         // automatic bottom section: feeds the dead-feed detector flagged.
         // These shows STAY in their categories above — this is a repair
         // list, and each podcast screen offers the replacement-feed search.
-        val failing = podcasts
+        val failing = library
             .filter { it.localFolderUri == null && it.consecutiveFailures >= 3 }
             .sortedBy { it.title.lowercase() }
         if (failing.isNotEmpty()) {
@@ -570,6 +575,59 @@ private fun PodcastGrid(
                 }
             } else {
                 items(failing, key = { "a/${it.id}" }) { podcast ->
+                    PodcastTile(
+                        podcast = podcast,
+                        badgeCounts = badgeByPodcast[podcast.id],
+                        selected = podcast.id in selectedIds,
+                        onClick = { onPodcastClick(podcast.id) },
+                        onLongClick = { onPodcastLongClick(podcast.id) }
+                    )
+                }
+            }
+        }
+
+        // one-off episodes saved from Discover without subscribing. Kept
+        // visually apart from the library so a show you never subscribed
+        // to can't be mistaken for one you did.
+        if (savedOnly.isNotEmpty()) {
+            item(key = "section-saved", span = { GridItemSpan(maxLineSpan) }) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.Download,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        stringResource(R.string.saved_episodes) +
+                            "  ·  ${savedOnly.size}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
+            }
+            if (com.stepcast.app.data.AppSettings.libraryCompactList) {
+                items(
+                    savedOnly,
+                    key = { "s/${it.id}" },
+                    span = { GridItemSpan(maxLineSpan) }
+                ) { podcast ->
+                    PodcastCompactRow(
+                        podcast = podcast,
+                        selected = podcast.id in selectedIds,
+                        onClick = { onPodcastClick(podcast.id) },
+                        onLongClick = { onPodcastLongClick(podcast.id) }
+                    )
+                }
+            } else {
+                items(savedOnly, key = { "s/${it.id}" }) { podcast ->
                     PodcastTile(
                         podcast = podcast,
                         badgeCounts = badgeByPodcast[podcast.id],

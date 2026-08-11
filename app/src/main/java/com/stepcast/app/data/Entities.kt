@@ -58,7 +58,16 @@ data class Podcast(
     /** Last chip picked in this feed's episode list; remembered per show. */
     val lastEpisodeFilter: Int = FILTER_ALL,
     /** How this feed's episode list orders — see SORT_* below. */
-    val episodeSortMode: Int = SORT_DATE
+    val episodeSortMode: Int = SORT_DATE,
+    /**
+     * False for a show that exists ONLY to hold a one-off saved episode
+     * (Discover → save an episode without subscribing). Such a row is
+     * still a real podcast for lookup purposes — Up Next, Downloads and
+     * History resolve titles and artwork through it — but it is not part
+     * of the library: it never refreshes, never offers schedule rules,
+     * and is not a SmartPlay scope. Subscribing later just flips this.
+     */
+    val subscribed: Boolean = true
 ) {
     companion object {
         const val FILTER_ALL = 0

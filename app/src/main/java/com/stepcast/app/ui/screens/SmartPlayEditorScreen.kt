@@ -82,7 +82,7 @@ fun SmartPlayEditorScreen(
             .filter { matchCounts[it.id] == 0 }
             .associate { it.id to repository.explainSmartPlayEntry(it) }
     }
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
+    val podcasts by repository.subscribedPodcasts.collectAsState(initial = emptyList())
     val podcastsById = podcasts.associateBy { it.id }
     val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
     val categoryNames = categoryMetas.map { it.name }

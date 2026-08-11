@@ -64,7 +64,9 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         // their inferred expected release (ReleasePattern over pubDates).
         val cfg = scheduleConfig()
         val now = System.currentTimeMillis()
-        val all = app.repository.allPodcasts()
+        // subscribed only: a show kept purely for a saved episode has
+        // no feed contract with the user and must never be fetched
+        val all = app.repository.subscribedPodcastList()
         // one inference per podcast per run — isDue AND planNextCheck need
         // it, and recomputing was 4N queries on a big library
         val expected = HashMap<Long, Long?>(all.size)
@@ -184,7 +186,7 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         // keep the winning podcast/reason, not just the time — "why is it
         // waking at 3am" is unanswerable from a bare timestamp
         var winner: Triple<Long, String, ScheduleEngine.Reason>? = null
-        for (podcast in app.repository.allPodcasts()) {
+        for (podcast in app.repository.subscribedPodcastList()) {
             val expectedMs = if (expectedCache != null) {
                 expectedCache[podcast.id]
             } else {

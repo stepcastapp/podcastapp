@@ -71,7 +71,7 @@ fun ScheduleScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
+    val podcasts by repository.subscribedPodcasts.collectAsState(initial = emptyList())
     val sortedPods = remember(podcasts) { podcasts.sortedBy { it.title.lowercase() } }
 
     val checkpointTimes = AppSettings.checkpointTimes

@@ -35,6 +35,54 @@ class PodcastRepository(
 
     val podcasts get() = db.podcastDao().observeAll()
 
+    /**
+     * "My library" — excludes shows that exist only to hold a one-off
+     * saved episode. Use this for anything that treats a podcast as a
+     * subscription (the grid, refresh, schedule rules, SmartPlay scopes,
+     * OPML export); use [podcasts] when resolving an episode's show.
+     */
+    val subscribedPodcasts get() = db.podcastDao().observeSubscribed()
+
+    suspend fun subscribedPodcastList(): List<Podcast> =
+        db.podcastDao().listSubscribed()
+
+    /**
+     * Keeps ONE episode without subscribing to its show — "I heard about
+     * this episode, I want to hear it, I don't want the feed."
+     *
+     * The show still gets a row (an episode has to belong to something,
+     * and Up Next/Downloads/History resolve titles and artwork through
+     * it) but it is flagged unsubscribed, so it stays out of the library
+     * grid and is never refreshed. keepDownloads = 0 matters: the
+     * auto-manage pass deletes played downloads only when it is above
+     * zero, and a deliberately saved episode must not evaporate the
+     * moment it is finished.
+     *
+     * Idempotent — saving the same episode twice returns the same row.
+     */
+    suspend fun saveEpisodeWithoutSubscribing(
+        feedUrl: String,
+        feed: ParsedFeed,
+        episode: ParsedEpisode
+    ): Long = withContext(Dispatchers.IO) {
+        val podcastId = podcastIdForFeed(feedUrl) ?: insertPodcastOrExisting(
+            Podcast(
+                feedUrl = feedUrl,
+                title = feed.title,
+                description = feed.description,
+                imageUrl = feed.imageUrl,
+                author = feed.author,
+                subscribed = false,
+                keepDownloads = 0,
+                lastRefreshed = System.currentTimeMillis()
+            )
+        )
+        db.episodeDao().insertAll(listOf(episode.toEntity(podcastId)))
+        // by audioUrl, not the insert's return: a repeat save conflicts
+        // (IGNORE) and yields -1, but the row we want is already there
+        db.episodeDao().getByAudioUrl(episode.audioUrl)?.id ?: 0L
+    }
+
     fun episodesFor(podcastId: Long) = db.episodeDao().observeForPodcast(podcastId)
 
     fun observePodcast(podcastId: Long) = db.podcastDao().observe(podcastId)
@@ -62,6 +110,9 @@ class PodcastRepository(
         // normalized match so an equivalent URL refreshes instead of duplicating
         val existingId = podcastIdForFeed(feedUrl)
         if (existingId != null) {
+            // the show may already exist purely to hold a saved episode —
+            // subscribing promotes that row rather than duplicating it
+            db.podcastDao().markSubscribed(existingId)
             refresh(existingId)
             return@withContext existingId
         }
