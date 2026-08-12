@@ -81,21 +81,22 @@ class CommandReceiver : BroadcastReceiver() {
                 (smartPlayName?.let { " name=$it" } ?: "")
         )
         if (action == ACTION_START_SMART_PLAY) {
-            // ONE custom command; the service queues AND starts playback
-            // entirely on its side. The old approach (setMediaItems with
-            // bare ids + prepare + play from here) raced the controller
-            // release: the per-episode id resolution was still in flight
-            // when the grace delay ended, so the queue filled but playback
-            // never started.
+            // Route through the invisible trampoline Activity instead of
+            // hitting the controller directly from here: a broadcast
+            // (Tasker/adb/Bixby) carries no foreground-service-start
+            // allowlist on Android 12+, so sending the custom command from
+            // this receiver queues the episodes and calls play(), but the
+            // service can't promote to foreground and gets killed right
+            // after — the queue fills, playback never starts. This is the
+            // same bug PlaybackTrampolineActivity was built to fix for
+            // widget taps (see its doc comment); an activity start carries
+            // the allowlist a broadcast doesn't.
             val name = smartPlayName ?: return
-            withController(context) { controller ->
-                controller.sendCustomCommand(
-                    SessionCommand(PlaybackService.ACTION_START_SMARTPLAY, Bundle.EMPTY),
-                    Bundle().apply {
-                        putString(PlaybackService.KEY_SMARTPLAY_NAME, name)
-                    }
-                )
-            }
+            context.startActivity(
+                Intent(context, PlaybackTrampolineActivity::class.java)
+                    .putExtra("smartplay", name)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
             return
         }
         withController(context) { controller ->
