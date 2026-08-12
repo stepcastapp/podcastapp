@@ -74,9 +74,10 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                         "SmartPlays",
                         style = TextStyle(
                             fontWeight = FontWeight.Bold,
-                            color = GlanceTheme.colors.primary
+                            color = widgetIconTint(opacity)
                         ),
                         modifier = GlanceModifier
+                            .widgetTextScrim(opacity)
                             .clickable(actionStartActivity<MainActivity>())
                     )
                     Spacer(GlanceModifier.height(4.dp))
@@ -88,8 +89,9 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                             Text(
                                 "No SmartPlays yet — create one on the Up Next tab",
                                 style = TextStyle(
-                                    color = GlanceTheme.colors.onSurfaceVariant
-                                )
+                                    color = widgetSecondaryTextColor(opacity)
+                                ),
+                                modifier = GlanceModifier.widgetTextScrim(opacity)
                             )
                         }
                     }
@@ -129,6 +131,11 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                             Image(
                                 provider = ImageProvider(R.drawable.ic_notif_play),
                                 contentDescription = "Play $name",
+                                // the drawable is hardcoded white, so it was
+                                // invisible on a light panel until now
+                                colorFilter = androidx.glance.ColorFilter.tint(
+                                    widgetIconTint(opacity)
+                                ),
                                 modifier = GlanceModifier.size(20.dp)
                             )
                             Spacer(GlanceModifier.width(10.dp))
@@ -136,9 +143,10 @@ class StepcastSmartPlaysWidget : GlanceAppWidget() {
                                 name,
                                 style = TextStyle(
                                     fontWeight = FontWeight.Medium,
-                                    color = GlanceTheme.colors.onSurface
+                                    color = widgetTextColor(opacity)
                                 ),
-                                maxLines = 1
+                                maxLines = 1,
+                                modifier = GlanceModifier.widgetTextScrim(opacity)
                             )
                         }
                     }

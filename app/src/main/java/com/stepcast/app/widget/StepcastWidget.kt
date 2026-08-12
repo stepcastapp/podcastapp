@@ -240,6 +240,61 @@ internal fun widgetBackgroundColor(
 }
 
 /**
+ * Below this, the widget's own panel is too faint to define contrast and
+ * the content is effectively sitting on raw wallpaper. Surface-relative
+ * theme colours (onSurface, primary, surfaceVariant) stop meaning
+ * anything there: they are picked against a surface that isn't visible,
+ * so on a dark wallpaper a light-theme phone renders near-black text on
+ * near-black pixels. Everything below switches to fixed colours instead.
+ */
+private const val FLOATING_BELOW = 40
+
+internal fun widgetIsFloating(opacity: Int) = opacity < FLOATING_BELOW
+
+/** Primary text: theme-aware on a panel, fixed white when floating. */
+@Composable
+internal fun widgetTextColor(opacity: Int): androidx.glance.unit.ColorProvider =
+    if (widgetIsFloating(opacity)) {
+        ColorProvider(day = Color.White, night = Color.White)
+    } else {
+        GlanceTheme.colors.onSurface
+    }
+
+/** Secondary text: slightly dimmed, same rule. */
+@Composable
+internal fun widgetSecondaryTextColor(opacity: Int): androidx.glance.unit.ColorProvider =
+    if (widgetIsFloating(opacity)) {
+        ColorProvider(day = Color(0xE0FFFFFF), night = Color(0xE0FFFFFF))
+    } else {
+        GlanceTheme.colors.onSurfaceVariant
+    }
+
+/** Glyph tint: the accent can be a mid-tone that disappears on wallpaper. */
+@Composable
+internal fun widgetIconTint(opacity: Int): androidx.glance.unit.ColorProvider =
+    if (widgetIsFloating(opacity)) {
+        ColorProvider(day = Color.White, night = Color.White)
+    } else {
+        GlanceTheme.colors.primary
+    }
+
+/**
+ * A dark pill behind floating text. White alone is a coin flip — Glance
+ * has no text shadow or outline, so against a pale wallpaper white text
+ * would be just as unreadable as the dark text this replaces. The scrim
+ * is what actually guarantees legibility; it stays off entirely once the
+ * widget has a real panel behind it.
+ */
+internal fun GlanceModifier.widgetTextScrim(opacity: Int): GlanceModifier =
+    if (widgetIsFloating(opacity)) {
+        this.background(ColorProvider(day = Color(0x8A000000), night = Color(0x8A000000)))
+            .cornerRadius(8.dp)
+            .padding(horizontal = 6.dp, vertical = 3.dp)
+    } else {
+        this
+    }
+
+/**
  * The play/pause control every widget shares. With a visible background
  * it's a filled button; at Clear (0%) it collapses to just the tinted
  * glyph so nothing floats on the wallpaper but the symbol itself.
@@ -258,7 +313,7 @@ internal fun PlayPauseButton(isPlaying: Boolean, opacity: Int, sizeDp: Int = 44)
             Image(
                 provider = ImageProvider(icon),
                 contentDescription = label,
-                colorFilter = ColorFilter.tint(GlanceTheme.colors.primary),
+                colorFilter = ColorFilter.tint(widgetIconTint(opacity)),
                 modifier = GlanceModifier.size((sizeDp * 3 / 4).dp)
             )
         }
@@ -288,7 +343,7 @@ internal fun TransportButton(
             Image(
                 provider = ImageProvider(icon),
                 contentDescription = label,
-                colorFilter = ColorFilter.tint(GlanceTheme.colors.primary),
+                colorFilter = ColorFilter.tint(widgetIconTint(opacity)),
                 modifier = GlanceModifier.size(26.dp)
             )
         }
@@ -302,7 +357,7 @@ internal fun TransportButton(
 }
 
 @Composable
-internal fun ArtworkOrGlyph(art: Bitmap?, sizeDp: Int) {
+internal fun ArtworkOrGlyph(art: Bitmap?, sizeDp: Int, opacity: Int = 100) {
     if (art != null) {
         Image(
             provider = ImageProvider(art),
@@ -315,7 +370,7 @@ internal fun ArtworkOrGlyph(art: Bitmap?, sizeDp: Int) {
             modifier = GlanceModifier.size(sizeDp.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text("▂▄▆", style = TextStyle(color = GlanceTheme.colors.primary))
+            Text("▂▄▆", style = TextStyle(color = widgetIconTint(opacity)))
         }
     }
 }
@@ -359,21 +414,21 @@ class StepcastWidget : GlanceAppWidget() {
                 .clickable(actionStartActivity<MainActivity>())
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ArtworkOrGlyph(state.art, sizeDp = 56)
+                ArtworkOrGlyph(state.art, sizeDp = 56, opacity = opacity)
                 Spacer(GlanceModifier.width(10.dp))
-                Column(GlanceModifier.defaultWeight()) {
+                Column(GlanceModifier.defaultWeight().widgetTextScrim(opacity)) {
                     Text(
                         state.title,
                         style = TextStyle(
                             fontWeight = FontWeight.Medium,
-                            color = GlanceTheme.colors.onSurface
+                            color = widgetTextColor(opacity)
                         ),
                         maxLines = 2
                     )
                     if (state.podcast.isNotEmpty()) {
                         Text(
                             state.podcast,
-                            style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant),
+                            style = TextStyle(color = widgetSecondaryTextColor(opacity)),
                             maxLines = 1
                         )
                     }
@@ -385,7 +440,14 @@ class StepcastWidget : GlanceAppWidget() {
                     progress = state.progress,
                     modifier = GlanceModifier.fillMaxWidth().height(4.dp),
                     color = GlanceTheme.colors.primary,
-                    backgroundColor = GlanceTheme.colors.surfaceVariant
+                    // the TRACK is the full-width part: as an opaque
+                    // surfaceVariant on a clear widget it read as a big
+                    // white slab, louder than the episode itself
+                    backgroundColor = if (widgetIsFloating(opacity)) {
+                        ColorProvider(day = Color(0x59FFFFFF), night = Color(0x59FFFFFF))
+                    } else {
+                        GlanceTheme.colors.surfaceVariant
+                    }
                 )
                 Spacer(GlanceModifier.height(10.dp))
             }
@@ -490,7 +552,7 @@ class StepcastBarWidget : GlanceAppWidget() {
                             .padding(horizontal = 8.dp, vertical = 8.dp)
                             .clickable(actionStartActivity<MainActivity>())
                     ) {
-                        ArtworkOrGlyph(state.art, sizeDp = 44)
+                        ArtworkOrGlyph(state.art, sizeDp = 44, opacity = opacity)
                         Spacer(GlanceModifier.defaultWeight())
                         PlayPauseButton(state.isPlaying, opacity)
                     }
@@ -502,14 +564,16 @@ class StepcastBarWidget : GlanceAppWidget() {
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                             .clickable(actionStartActivity<MainActivity>())
                     ) {
-                        ArtworkOrGlyph(state.art, sizeDp = 44)
+                        ArtworkOrGlyph(state.art, sizeDp = 44, opacity = opacity)
                         Spacer(GlanceModifier.width(10.dp))
-                        Column(GlanceModifier.defaultWeight()) {
+                        Column(
+                            GlanceModifier.defaultWeight().widgetTextScrim(opacity)
+                        ) {
                             Text(
                                 state.title.ifEmpty { "Nothing playing" },
                                 style = TextStyle(
                                     fontWeight = FontWeight.Medium,
-                                    color = GlanceTheme.colors.onSurface
+                                    color = widgetTextColor(opacity)
                                 ),
                                 maxLines = 1
                             )
@@ -517,7 +581,7 @@ class StepcastBarWidget : GlanceAppWidget() {
                                 Text(
                                     state.podcast,
                                     style = TextStyle(
-                                        color = GlanceTheme.colors.onSurfaceVariant
+                                        color = widgetSecondaryTextColor(opacity)
                                     ),
                                     maxLines = 1
                                 )
@@ -564,7 +628,7 @@ class StepcastMiniWidget : GlanceAppWidget() {
                         ) {
                             Text(
                                 "▂▄▆",
-                                style = TextStyle(color = GlanceTheme.colors.primary)
+                                style = TextStyle(color = widgetIconTint(opacity))
                             )
                         }
                     }
@@ -623,7 +687,7 @@ class StepcastPlayWidget : GlanceAppWidget() {
                             }
                         ),
                         contentDescription = if (state.isPlaying) "Pause" else "Play",
-                        colorFilter = ColorFilter.tint(GlanceTheme.colors.primary),
+                        colorFilter = ColorFilter.tint(widgetIconTint(opacity)),
                         modifier = GlanceModifier.size(32.dp)
                     )
                 }
@@ -642,19 +706,22 @@ private fun EmptyWidget(opacity: Int) {
             .clickable(actionStartActivity<MainActivity>()),
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("▂▄▆", style = TextStyle(color = GlanceTheme.colors.primary))
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = GlanceModifier.widgetTextScrim(opacity)
+        ) {
+            Text("▂▄▆", style = TextStyle(color = widgetIconTint(opacity)))
             Spacer(GlanceModifier.height(4.dp))
             Text(
                 "Nothing playing",
                 style = TextStyle(
                     fontWeight = FontWeight.Medium,
-                    color = GlanceTheme.colors.onSurface
+                    color = widgetTextColor(opacity)
                 )
             )
             Text(
                 "Tap to open Stepcast",
-                style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant)
+                style = TextStyle(color = widgetSecondaryTextColor(opacity))
             )
         }
     }

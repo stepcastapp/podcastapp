@@ -99,6 +99,21 @@ build or one confused on-device session.
   disk first, and dropping the last binder mid-rebuild can tear the
   service down before it reaches play. Journal: "play via controller
   (cold, expect resume)" should be followed by a `resume` line.
+- **Theme colours are meaningless once the panel goes transparent.**
+  `GlanceTheme.colors.onSurface`/`primary`/`surfaceVariant` are chosen
+  against a surface, so at low widget opacity they are being contrasted
+  with something the user cannot see — a light-theme phone over a dark
+  wallpaper renders near-black text on near-black pixels (field report).
+  Below `FLOATING_BELOW` (40%) the widgets switch to fixed white content
+  plus a dark scrim behind text; the scrim is the part that actually
+  guarantees legibility, because Glance `TextStyle` has no shadow or
+  outline and plain white would just fail the other way on a pale
+  wallpaper. Same trap for `LinearProgressIndicator.backgroundColor`:
+  an opaque `surfaceVariant` TRACK spans the full width, so on a clear
+  widget it read as a big white slab louder than the episode title.
+- **Tint every drawable you draw in a widget.** `ic_notif_*` are
+  hardcoded `#FFFFFFFF`; the SmartPlays row drew one with no
+  `colorFilter` at all, which was invisible on a light panel.
 - **Responsive shrinking.** `SizeMode.Responsive` breakpoints keep the
   play/pause button alive as the bar widget shrinks (text drops <200dp,
   art drops <110dp); `minResizeWidth=40dp` allows 1-cell. Launchers cache
