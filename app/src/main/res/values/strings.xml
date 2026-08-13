@@ -11,6 +11,8 @@
     <string name="widget_play_description">Just play/pause — nothing else</string>
     <string name="widget_smartplays_label">Stepcast SmartPlays</string>
     <string name="widget_smartplays_description">One-tap SmartPlay starters</string>
+    <string name="widget_transport_label">Stepcast transport</string>
+    <string name="widget_transport_description">One-row strip: artwork with a progress ring, seek, play/pause</string>
 
     <!-- extracted UI strings -->
     <string name="accent_color">Accent color</string>

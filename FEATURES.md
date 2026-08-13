@@ -276,11 +276,14 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 
 ## Widgets (Glance)
 
-Five home-screen widgets, all with live playback state and a per-widget
+Six home-screen widgets, all with live playback state and a per-widget
 opacity/background setting (including fully transparent):
-- **Player** — artwork, title, full transport.
+- **Player** — artwork, title, full transport, horizontal progress bar.
 - **Bar** — slim strip; size-responsive (collapses to button-only when
   narrow).
+- **Transport** — one row tall, full width: artwork wrapped in a
+  progress ring (no room for a separate bar at this height) plus
+  seek-back/play-pause/seek-forward; drops the seek pair when narrow.
 - **Mini** — artwork tile with play/pause.
 - **Play button** — 1x1 play/pause only.
 - **SmartPlays** — one-tap SmartPlay starters.

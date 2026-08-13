@@ -90,8 +90,8 @@ Not intents you send, but automation-adjacent:
   these route `com.stepcast.app.shortcut.SMARTPLAY` through the invisible
   PlaybackTrampolineActivity — an implementation detail, not a stable
   external API; automate via the broadcast above instead.)
-- **Player / bar / mini / play-button widgets** — transport controls.
-  Play taps ride the same system media-key pipeline as `PLAY`/`TOGGLE`
-  above (not the notification's broadcast path); the other transport
-  buttons drive a bound media controller, and SmartPlay taps go through
-  the invisible PlaybackTrampolineActivity.
+- **Player / bar / mini / transport / play-button widgets** — transport
+  controls. Play taps ride the same system media-key pipeline as
+  `PLAY`/`TOGGLE` above (not the notification's broadcast path); the
+  other transport buttons drive a bound media controller, and SmartPlay
+  taps go through the invisible PlaybackTrampolineActivity.

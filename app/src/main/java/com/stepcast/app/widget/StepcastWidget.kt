@@ -64,10 +64,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await
 
 // ---------------------------------------------------------------------------
-// Three widgets, one state: PLAYER (art + progress + full transport),
-// BAR (one-row: art + title + play/pause), MINI (artwork tile + play/pause).
-// PlaybackService publishes state to SharedPreferences and calls
-// updateAllStepcastWidgets(); background opacity is a Settings choice.
+// One state, several widgets: PLAYER (art + progress bar + full transport),
+// BAR (one-row: art + title + play/pause), MINI (artwork tile + play/pause),
+// TRANSPORT (one-row: ring-progress art + seek/play/seek — see
+// StepcastTransportWidget.kt). PlaybackService publishes state to
+// SharedPreferences and calls updateAllStepcastWidgets(); background
+// opacity is a Settings choice.
 // ---------------------------------------------------------------------------
 
 class StepcastWidgetReceiver : GlanceAppWidgetReceiver() {
@@ -133,7 +135,8 @@ suspend fun updateAllStepcastWidgets(context: Context) {
         StepcastWidget(),
         StepcastBarWidget(),
         StepcastMiniWidget(),
-        StepcastPlayWidget()
+        StepcastPlayWidget(),
+        StepcastTransportWidget()
     )) {
         for (id in manager.getGlanceIds(widget.javaClass)) {
             runCatching {
