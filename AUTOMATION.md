@@ -30,12 +30,15 @@ Send an **explicit broadcast** to the command receiver:
 pipeline carries the foreground-service exemption, so playback genuinely
 starts from a background broadcast on Android 12+ (and revives the last
 session via playback resumption after process death). `START_SMART_PLAY`
-routes through the same invisible trampoline Activity the SmartPlays
-widget and launcher shortcuts use, for the same reason: a plain broadcast
-carries no foreground-service-start allowlist, so commanding the service
-directly from the receiver used to fill the queue and then get killed
-before playback actually began. It returns an error for a SmartPlay name
-that doesn't match anything: the queue and playback are left untouched.
+fills the queue through the bound controller and then verifies playback
+actually landed, falling back to the same system media-key pipeline if
+the service didn't reach foreground in time — a plain broadcast carries
+neither the foreground-service-start allowlist nor the background-
+activity-start allowlist a widget tap or launcher shortcut gets, so
+commanding the service (or launching a trampoline Activity) directly from
+the receiver used to fill the queue and then get killed before playback
+actually began. It returns an error for a SmartPlay name that doesn't
+match anything: the queue and playback are left untouched.
 
 ### adb examples
 

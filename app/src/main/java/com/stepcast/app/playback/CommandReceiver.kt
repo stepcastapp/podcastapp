@@ -81,22 +81,15 @@ class CommandReceiver : BroadcastReceiver() {
                 (smartPlayName?.let { " name=$it" } ?: "")
         )
         if (action == ACTION_START_SMART_PLAY) {
-            // Route through the invisible trampoline Activity instead of
-            // hitting the controller directly from here: a broadcast
-            // (Tasker/adb/Bixby) carries no foreground-service-start
-            // allowlist on Android 12+, so sending the custom command from
-            // this receiver queues the episodes and calls play(), but the
-            // service can't promote to foreground and gets killed right
-            // after — the queue fills, playback never starts. This is the
-            // same bug PlaybackTrampolineActivity was built to fix for
-            // widget taps (see its doc comment); an activity start carries
-            // the allowlist a broadcast doesn't.
+            // NOT an activity-start route: launching PlaybackTrampolineActivity
+            // from here was tried and confirmed dead — a bare BroadcastReceiver
+            // has no background-activity-start allowlist either (a *different*
+            // restriction than the foreground-service one below, but just as
+            // strict), so context.startActivity() from this receiver is
+            // silently blocked by the OS and the activity's onCreate never
+            // even runs.
             val name = smartPlayName ?: return
-            context.startActivity(
-                Intent(context, PlaybackTrampolineActivity::class.java)
-                    .putExtra("smartplay", name)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
+            startSmartPlay(context, name)
             return
         }
         withController(context) { controller ->
@@ -135,6 +128,49 @@ class CommandReceiver : BroadcastReceiver() {
                 )
                 else -> null
             }
+        }
+    }
+
+    /**
+     * Fills the queue via the bound controller (as before), but doesn't let
+     * go the instant the custom command "succeeds" — that result only means
+     * the queue filled and play() was requested, not that the service
+     * actually reached foreground. Releasing the last bound client right
+     * then let the OS kill the still-not-foreground service outright
+     * (journal: pwr reason=focus-loss immediately followed by a full
+     * "pos destroy", not just a pause). So: hold the controller, check
+     * whether playback actually landed, and if not, fall back to the
+     * system media-key pipeline — the same FGS-start exemption
+     * resumeStepcastPlayback's fallback already relies on (see
+     * dispatchPlayMediaKey) — before releasing. The key carries no
+     * SmartPlay name, but none is needed by then: the queue is already
+     * filled, so a plain resume is all the fallback has to do.
+     */
+    private suspend fun startSmartPlay(context: Context, name: String) {
+        val token = SessionToken(
+            context, ComponentName(context, PlaybackService::class.java)
+        )
+        val controller = MediaController.Builder(context, token).buildAsync().await()
+        try {
+            val future = controller.sendCustomCommand(
+                SessionCommand(PlaybackService.ACTION_START_SMARTPLAY, Bundle.EMPTY),
+                Bundle().apply { putString(PlaybackService.KEY_SMARTPLAY_NAME, name) }
+            )
+            val result = withTimeoutOrNull(4_000) { future.await() }
+            com.stepcast.app.data.PlaybackJournal.log(
+                "automation",
+                "result=" + (result?.resultCode?.toString() ?: "timeout")
+            )
+            delay(1_000)
+            if (!controller.isPlaying) {
+                com.stepcast.app.data.PlaybackJournal.log(
+                    "automation", "smartplay queued but not playing; falling back to media key"
+                )
+                com.stepcast.app.widget.dispatchPlayMediaKey(context)
+                delay(1_000)
+            }
+        } finally {
+            controller.release()
         }
     }
 
