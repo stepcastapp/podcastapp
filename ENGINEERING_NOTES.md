@@ -118,6 +118,21 @@ build or one confused on-device session.
   play/pause button alive as the bar widget shrinks (text drops <200dp,
   art drops <110dp); `minResizeWidth=40dp` allows 1-cell. Launchers cache
   a widget's resize bounds — remove/re-add after changing them.
+- **`SizeMode.Responsive` breakpoints are a promise you have to keep
+  yourself.** `LocalSize.current` inside the composition snaps to one of
+  your *declared* sizes, not the raw on-screen size — but Glance doesn't
+  stop your content from demanding more room than that declared size
+  actually has. The PLAYER widget's transport row assumed ~44dp buttons
+  at its 170dp/230dp breakpoints; `CircleIconButton` (used for the
+  non-play buttons) has no size parameter of its own and defaults to a
+  fixed 48dp, so the row's real content width (188dp / 246dp) exceeded
+  the tier's own declared width and got clipped by the widget's actual
+  bounds whenever the real cell size landed close to a breakpoint. Fix:
+  size every button explicitly via `modifier = GlanceModifier.size(...)`
+  (don't trust a component's built-in default), and compute that size
+  from the row's real content budget (`width - padding - spacers, /
+  buttonCount`) so it *autoscales* to whatever's actually shown instead
+  of assuming a constant.
 - **Per-widget config:** `GlanceAppWidgetManager.getAppWidgetId(glanceId)`
   + an `opacity_<appWidgetId>` pref; configure activity declared with
   `reconfigurable|configuration_optional`. `stringResource` does NOT work

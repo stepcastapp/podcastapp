@@ -327,31 +327,41 @@ internal fun PlayPauseButton(isPlaying: Boolean, opacity: Int, sizeDp: Int = 44)
     }
 }
 
-/** Same treatment for the secondary transport buttons. */
+/**
+ * Same treatment for the secondary transport buttons. CircleIconButton has
+ * no size parameter of its own and defaults to a fixed 48dp regardless of
+ * what the caller expects — that mismatch (the row's width math assumed a
+ * smaller, PlayPauseButton-matching size) is what let the row overflow its
+ * own widget bounds and clip. Sizing it explicitly, driven by the same
+ * value PlayPauseButton gets, is what makes the row's own width budget
+ * (see PlayerWidget) actually correct.
+ */
 @Composable
 internal fun TransportButton(
     icon: Int,
     label: String,
     opacity: Int,
-    onClick: androidx.glance.action.Action
+    onClick: androidx.glance.action.Action,
+    sizeDp: Int = 44
 ) {
     if (opacity <= 0) {
         Box(
             contentAlignment = Alignment.Center,
-            modifier = GlanceModifier.size(44.dp).clickable(onClick)
+            modifier = GlanceModifier.size(sizeDp.dp).clickable(onClick)
         ) {
             Image(
                 provider = ImageProvider(icon),
                 contentDescription = label,
                 colorFilter = ColorFilter.tint(widgetIconTint(opacity)),
-                modifier = GlanceModifier.size(26.dp)
+                modifier = GlanceModifier.size((sizeDp * 3 / 4).dp)
             )
         }
     } else {
         CircleIconButton(
             imageProvider = ImageProvider(icon),
             contentDescription = label,
-            onClick = onClick
+            onClick = onClick,
+            modifier = GlanceModifier.size(sizeDp.dp)
         )
     }
 }
@@ -381,9 +391,14 @@ class StepcastWidget : GlanceAppWidget() {
 
     override val stateDefinition = PreferencesGlanceStateDefinition
 
-    // the transport row is ~206dp of fixed buttons: below ~230dp the Done
-    // button goes, below ~170dp the seek pair goes too (play/pause is the
-    // one thing that must survive any resize)
+    // Buttons drop by tier as the widget narrows (seek pair below 170dp,
+    // Done below 230dp; play/pause always survives). Within whichever tier
+    // is shown, PlayerWidget sizes the buttons to fit that tier's own
+    // declared width rather than assuming a fixed size — CircleIconButton's
+    // built-in default (48dp) is wider than the row's old width math
+    // assumed, so at these exact breakpoints the row used to demand more
+    // space than the tier promised and got clipped by the widget's actual
+    // bounds.
     override val sizeMode = SizeMode.Responsive(
         setOf(
             DpSize(110.dp, 100.dp),
@@ -452,6 +467,19 @@ class StepcastWidget : GlanceAppWidget() {
                 Spacer(GlanceModifier.height(10.dp))
             }
             val width = androidx.glance.LocalSize.current.width
+            // same setting that gates the notification's Done button — read
+            // inside the composition so a toggle can take effect
+            val showSeek = width >= 170.dp
+            val showDone = width >= 230.dp && AppSettings.notificationDoneButton
+            val buttonCount = 1 + (if (showSeek) 2 else 0) + (if (showDone) 1 else 0)
+            val spacerCount = buttonCount - 1
+            // fit whatever's shown into the row's real content budget (the
+            // Column's 14dp horizontal padding on each side) instead of
+            // assuming a fixed button size — see the sizeMode comment above
+            val buttonSizeDp = ((width - 28.dp - spacerCount * 10.dp) / buttonCount)
+                .coerceIn(32.dp, 44.dp)
+                .value
+                .toInt()
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -459,34 +487,35 @@ class StepcastWidget : GlanceAppWidget() {
             ) {
                 // narrow widgets drop buttons instead of clipping the LAST
                 // one off-screen (Done was silently unreachable)
-                if (width >= 170.dp) {
+                if (showSeek) {
                     TransportButton(
                         R.drawable.ic_notif_replay,
                         "Seek back",
                         opacity,
-                        actionRunCallback<SeekBackAction>()
+                        actionRunCallback<SeekBackAction>(),
+                        sizeDp = buttonSizeDp
                     )
                     Spacer(GlanceModifier.width(10.dp))
                 }
-                PlayPauseButton(state.isPlaying, opacity)
-                if (width >= 170.dp) {
+                PlayPauseButton(state.isPlaying, opacity, sizeDp = buttonSizeDp)
+                if (showSeek) {
                     Spacer(GlanceModifier.width(10.dp))
                     TransportButton(
                         R.drawable.ic_notif_forward,
                         "Seek forward",
                         opacity,
-                        actionRunCallback<SeekForwardAction>()
+                        actionRunCallback<SeekForwardAction>(),
+                        sizeDp = buttonSizeDp
                     )
                 }
-                // same setting that gates the notification's Done button —
-                // read inside the composition so a toggle can take effect
-                if (width >= 230.dp && AppSettings.notificationDoneButton) {
+                if (showDone) {
                     Spacer(GlanceModifier.width(10.dp))
                     TransportButton(
                         R.drawable.ic_notif_done,
                         "Done: mark played, delete, next",
                         opacity,
-                        actionRunCallback<DoneDeleteAction>()
+                        actionRunCallback<DoneDeleteAction>(),
+                        sizeDp = buttonSizeDp
                     )
                 }
             }
