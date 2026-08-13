@@ -476,7 +476,7 @@ class StepcastWidget : GlanceAppWidget() {
             // fit whatever's shown into the row's real content budget (the
             // Column's 14dp horizontal padding on each side) instead of
             // assuming a fixed button size — see the sizeMode comment above
-            val buttonSizeDp = ((width - 28.dp - spacerCount * 10.dp) / buttonCount)
+            val buttonSizeDp = ((width - 28.dp - 10.dp * spacerCount) / buttonCount)
                 .coerceIn(32.dp, 44.dp)
                 .value
                 .toInt()
