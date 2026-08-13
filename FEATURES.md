@@ -37,6 +37,9 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 - **Grid of artwork tiles** (or a compact-list layout, toggleable in
   Settings) grouped by category, with collapsible sections (chevron
   collapses; tapping the header opens the merged category view).
+- **Sort within each category**: alphabetical (default) or, via a
+  Settings toggle, by each show's most recent episode — the order
+  reshuffles as new episodes arrive rather than staying fixed.
 - **Categories** are real multi-membership: a podcast can live in any
   number of categories (multi-select chips in podcast settings) and
   appears under each; uncategorized shows gather under "Other podcasts".

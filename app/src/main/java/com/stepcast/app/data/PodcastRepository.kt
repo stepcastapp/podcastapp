@@ -260,6 +260,9 @@ class PodcastRepository(
     /** Per-podcast downloaded/favorite/unplayed counts for Home badges. */
     val podcastBadgeCounts get() = db.episodeDao().observeBadgeCounts()
 
+    /** Each show's newest episode date, for the Library's "most recent" sort. */
+    val podcastLatestEpisodeDates get() = db.episodeDao().observeLatestEpisodeDates()
+
     suspend fun setFavorite(episodeId: Long, favorite: Boolean) =
         db.episodeDao().setFavorite(episodeId, favorite)
 

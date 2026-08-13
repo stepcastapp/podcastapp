@@ -88,6 +88,10 @@ fun HomeScreen(
     val memberships by repository.podcastCategories.collectAsState(initial = emptyList())
     val badgeCounts by repository.podcastBadgeCounts.collectAsState(initial = emptyList())
     val badgeByPodcast = remember(badgeCounts) { badgeCounts.associateBy { it.podcastId } }
+    val latestEpisodeDates by repository.podcastLatestEpisodeDates.collectAsState(initial = emptyList())
+    val latestEpisodeByPodcast = remember(latestEpisodeDates) {
+        latestEpisodeDates.associate { it.podcastId to it.latestMs }
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // categories created before metas existed get rows on first sight
@@ -242,6 +246,7 @@ fun HomeScreen(
                 memberships = memberships,
                 categoryOrder = categoryMetas.map { it.name },
                 badgeByPodcast = badgeByPodcast,
+                latestEpisodeByPodcast = latestEpisodeByPodcast,
                 selectedIds = selected,
                 onPodcastClick = { id ->
                     if (selected.isNotEmpty()) toggleSelected(id) else onPodcastClick(id)
@@ -353,6 +358,7 @@ private fun PodcastGrid(
     memberships: List<com.stepcast.app.data.PodcastCategory>,
     categoryOrder: List<String>,
     badgeByPodcast: Map<Long, com.stepcast.app.data.PodcastBadgeCounts>,
+    latestEpisodeByPodcast: Map<Long, Long>,
     selectedIds: List<Long>,
     onPodcastClick: (Long) -> Unit,
     onPodcastLongClick: (Long) -> Unit,
@@ -361,6 +367,15 @@ private fun PodcastGrid(
     onRefreshCategory: (String) -> Unit
 ) {
     val orderIndex = categoryOrder.withIndex().associate { (i, name) -> name to i }
+    // most-recent-first (0 = no episodes, sinks to the end) or alphabetical,
+    // per AppSettings.librarySortByRecent — read here so both the category
+    // sections and the uncategorized list below agree
+    val sortByRecent = com.stepcast.app.data.AppSettings.librarySortByRecent
+    val podcastOrder: (Podcast) -> Comparable<*> = if (sortByRecent) {
+        { -(latestEpisodeByPodcast[it.id] ?: 0L) }
+    } else {
+        { it.title.lowercase() }
+    }
     // shows kept only to hold a one-off saved episode are NOT part of the
     // library proper — they get their own section at the bottom rather
     // than sitting in categories, "Other podcasts", or the repair list
@@ -370,7 +385,7 @@ private fun PodcastGrid(
     val byCategory = memberships
         .groupBy({ it.category }, { it.podcastId })
         .mapValues { (_, ids) ->
-            ids.mapNotNull(podcastsById::get).sortedBy { it.title.lowercase() }
+            ids.mapNotNull(podcastsById::get).sortedWith(compareBy(podcastOrder))
         }
         .entries
         .filter { it.value.isNotEmpty() }
@@ -382,6 +397,7 @@ private fun PodcastGrid(
         )
     val categorizedIds = memberships.mapTo(HashSet()) { it.podcastId }
     val uncategorized = library.filter { it.id !in categorizedIds }
+        .sortedWith(compareBy(podcastOrder))
 
     val context = LocalContext.current
     val collapsed = com.stepcast.app.data.AppSettings.collapsedCategories

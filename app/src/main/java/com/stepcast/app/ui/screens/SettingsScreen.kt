@@ -656,6 +656,12 @@ fun SettingsScreen(
         }
         if (sectionOpen("Library")) {
         SwitchSetting(
+            label = stringResource(R.string.sort_by_most_recent_episode),
+            hint = stringResource(R.string.newest_episode_first_within_each_categor),
+            checked = AppSettings.librarySortByRecent,
+            onToggle = { AppSettings.setLibrarySortByRecent(context, it) }
+        )
+        SwitchSetting(
             label = stringResource(R.string.compact_list_layout),
             hint = stringResource(R.string.expanded_categories_show_slim_rows_instead),
             checked = AppSettings.libraryCompactList,

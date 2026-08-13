@@ -171,6 +171,7 @@
     <string name="keep_playing_when_the_queue_ends">Keep playing when the queue ends</string>
     <string name="merge_a_backup_file_into_this_install">Merge a backup file into this install</string>
     <string name="new_episode_notifications">New episode notifications</string>
+    <string name="newest_episode_first_within_each_categor">Newest episode first within each category, instead of alphabetical</string>
     <string name="next_episode_at_the_bottom">Next episode at the bottom</string>
     <string name="no_matches">No matches</string>
     <string name="nothing_finished_yet">Nothing finished yet</string>
@@ -197,6 +198,7 @@
     <string name="share_last_crash_report">Share last crash report…</string>
     <string name="skips_chapters_titled_sponsor_ad_or_promo">Skips chapters titled sponsor, ad, or promo</string>
     <string name="skips_silent_gaps_in_speech_applies_from_t">Skips silent gaps in speech · applies from the next episode</string>
+    <string name="sort_by_most_recent_episode">Sort by most recent episode</string>
     <string name="stack_trace_from_the_most_recent_crash">Stack trace from the most recent crash</string>
     <string name="stats">Stats</string>
     <string name="storage_2">Storage…</string>

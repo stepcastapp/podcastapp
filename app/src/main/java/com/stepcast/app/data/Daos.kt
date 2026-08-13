@@ -488,6 +488,10 @@ interface EpisodeDao {
     )
     fun observeBadgeCounts(): Flow<List<PodcastBadgeCounts>>
 
+    /** Each show's newest episode date, for the Library's "most recent" sort. */
+    @Query("SELECT podcastId, MAX(pubDateMs) AS latestMs FROM episodes GROUP BY podcastId")
+    fun observeLatestEpisodeDates(): Flow<List<PodcastLatestEpisode>>
+
     @Query("UPDATE episodes SET favorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: Long, favorite: Boolean)
 
@@ -719,6 +723,11 @@ data class PodcastBadgeCounts(
     val downloaded: Int,
     val favorite: Int,
     val unplayed: Int
+)
+
+data class PodcastLatestEpisode(
+    val podcastId: Long,
+    val latestMs: Long
 )
 
 @Dao

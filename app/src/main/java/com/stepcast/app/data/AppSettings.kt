@@ -79,6 +79,10 @@ object AppSettings {
     var libraryColumnCount by mutableStateOf(4)
         private set
 
+    /** Library grid: sort each category's shows by newest episode first, not title. */
+    var librarySortByRecent by mutableStateOf(false)
+        private set
+
     /** Corner badge on Home cards: see BADGE_* below. */
     var homeBadgeMode by mutableStateOf(BADGE_OFF)
         private set
@@ -142,6 +146,7 @@ object AppSettings {
         categoryRefreshButtons = p[booleanPreferencesKey(KEY_CAT_REFRESH)] ?: false
         libraryCompactList = p[booleanPreferencesKey(KEY_LIB_COMPACT)] ?: false
         libraryColumnCount = p[intPreferencesKey(KEY_LIB_COLUMNS)]?.coerceIn(3, 8) ?: 4
+        librarySortByRecent = p[booleanPreferencesKey(KEY_LIB_SORT_RECENT)] ?: false
         homeBadgeMode = p[intPreferencesKey(KEY_HOME_BADGE)] ?: BADGE_OFF
         activeStationId = p[longPreferencesKey(KEY_ACTIVE_STATION)] ?: 0L
         checkpointTimes = parseIntList(
@@ -223,6 +228,11 @@ object AppSettings {
     fun setLibraryColumnCount(context: Context, count: Int) {
         libraryColumnCount = count.coerceIn(3, 8)
         putInt(context, KEY_LIB_COLUMNS, libraryColumnCount)
+    }
+
+    fun setLibrarySortByRecent(context: Context, enabled: Boolean) {
+        librarySortByRecent = enabled
+        putBoolean(context, KEY_LIB_SORT_RECENT, enabled)
     }
 
     fun setHomeBadgeMode(context: Context, mode: Int) {
@@ -409,6 +419,7 @@ object AppSettings {
     private const val KEY_CAT_REFRESH = "categoryRefreshButtons"
     private const val KEY_LIB_COMPACT = "libraryCompactList"
     private const val KEY_LIB_COLUMNS = "libraryColumnCount"
+    private const val KEY_LIB_SORT_RECENT = "librarySortByRecent"
     private const val KEY_HOME_BADGE = "homeBadgeMode"
     private const val KEY_ACTIVE_STATION = "activeStationId"
     private const val KEY_CHECKPOINT_TIMES = "checkpointTimes"
