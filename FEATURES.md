@@ -139,7 +139,10 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 
 - **Queue screen**: drag reorder with haptics and edge auto-scroll,
   remove-with-undo, tap to play, long-press menu (details, go to podcast,
-  move to front/end, remove episodes before/after — removals undoable).
+  mark played, download/retry/cancel/delete download, move to front/end,
+  remove episodes before/after — removals undoable). A small status icon
+  (progress ring, downloaded check, or failed mark) shows next to the
+  show name.
 - **Clear queue** button with undo.
 - **Bottom-up mode** ("Next episode at the bottom"): the whole queue
   anchors to the bottom edge, the now-playing strip sits in-list, and the

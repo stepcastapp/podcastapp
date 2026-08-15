@@ -139,6 +139,17 @@ build or one confused on-device session.
   in Glance composables.
 - Widget prefs (`stepcast_widget`) deliberately stay on SharedPreferences —
   they're a synchronous cache read by Glance/resumption paths.
+- **Widget-picker previews need `android:previewLayout` (or the picker
+  shows just the app icon).** Neither attribute was ever set on any of
+  the `appwidget-provider` XMLs, so every widget fell back to an
+  icon-only tile — not a per-widget bug, a gap across all of them.
+  `previewLayout` points at a *plain Android View XML layout* (not
+  Glance/Compose — `LinearLayout`/`ImageView`/`TextView`, see
+  `res/layout/widget_preview_*.xml`), sized to roughly the widget's own
+  `minWidth`/`minHeight` so the aspect ratio in the picker matches the
+  real thing. It's API 31+ only; older devices still fall back to the
+  icon unless `android:previewImage` (a static drawable/PNG) is also
+  set — skipped here since it needs real generated art, not just XML.
 
 ## media3 / playback
 

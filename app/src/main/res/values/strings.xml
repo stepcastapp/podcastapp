@@ -13,6 +13,10 @@
     <string name="widget_smartplays_description">One-tap SmartPlay starters</string>
     <string name="widget_transport_label">Stepcast transport</string>
     <string name="widget_transport_description">One-row strip: artwork with a progress ring, seek, play/pause</string>
+    <string name="widget_preview_episode_title">Episode title</string>
+    <string name="widget_preview_podcast_name">Podcast name</string>
+    <string name="widget_preview_smartplay_one">Morning news</string>
+    <string name="widget_preview_smartplay_two">Weekend mix</string>
 
     <!-- extracted UI strings -->
     <string name="accent_color">Accent color</string>

@@ -20,13 +20,17 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Downloading
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -66,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.stepcast.app.data.AppSettings
 import com.stepcast.app.data.PodcastRepository
+import com.stepcast.app.download.DownloadWorker
 import com.stepcast.app.ui.Formatters
 import com.stepcast.app.ui.PlayerConnection
 import com.stepcast.app.ui.progressBorder
@@ -482,6 +487,63 @@ private fun QueueList(
                             scope.launch { repository.setPlayed(episode.id, true) }
                         }
                     )
+                    // virtual-feed episodes are already local files
+                    val isLocalFile = episode.audioUrl.startsWith("content:")
+                    when {
+                        isLocalFile -> Unit
+                        episode.isDownloading -> DropdownMenuItem(
+                            text = { Text(stringResource(R.string.cancel_download)) },
+                            onClick = {
+                                menuForId = null
+                                DownloadWorker.cancel(context, episode.id)
+                            }
+                        )
+                        episode.isDownloaded -> DropdownMenuItem(
+                            text = { Text(stringResource(R.string.delete_download)) },
+                            onClick = {
+                                menuForId = null
+                                scope.launch { repository.deleteDownload(episode.id) }
+                            }
+                        )
+                        else -> {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        stringResource(
+                                            if (episode.downloadStatus ==
+                                                com.stepcast.app.data.Episode.DOWNLOAD_FAILED
+                                            ) {
+                                                R.string.retry_download
+                                            } else {
+                                                R.string.download
+                                            }
+                                        )
+                                    )
+                                },
+                                onClick = {
+                                    menuForId = null
+                                    DownloadWorker.start(context, episode.id)
+                                }
+                            )
+                            // With Wi-Fi-only on, offer a one-shot override for
+                            // THIS episode so a single download (or retry) can
+                            // go over mobile data without touching the global
+                            // setting — same escape hatch EpisodeRow offers.
+                            if (AppSettings.wifiOnlyDownloads) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(stringResource(R.string.download_now_mobile_data))
+                                    },
+                                    onClick = {
+                                        menuForId = null
+                                        DownloadWorker.start(
+                                            context, episode.id, allowMetered = true
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
                     // triage in PLAY order ("before" plays sooner), so the
                     // wording holds in both normal and bottom-up layouts
                     val playIndex = display.indexOfFirst { it.id == episode.id }
@@ -677,13 +739,44 @@ private fun QueueList(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        podcast?.title.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        when {
+                            episode.isDownloading -> {
+                                CircularProgressIndicator(
+                                    progress = { episode.downloadProgress / 100f },
+                                    strokeWidth = 1.5.dp,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            episode.isDownloaded -> {
+                                Icon(
+                                    Icons.Rounded.DownloadDone,
+                                    contentDescription = stringResource(R.string.downloaded),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            episode.downloadStatus ==
+                                com.stepcast.app.data.Episode.DOWNLOAD_FAILED -> {
+                                Icon(
+                                    Icons.Rounded.ErrorOutline,
+                                    contentDescription = stringResource(R.string.download_failed),
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                        }
+                        Text(
+                            podcast?.title.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 val removedMsg = stringResource(R.string.removed_from_queue)
                 val undoLabel = stringResource(R.string.undo)
