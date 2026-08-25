@@ -126,6 +126,10 @@ class PlaybackService : MediaLibraryService() {
     private var currentAdJumpSec = 0
     private var lastWidgetArtUri: String? = null
 
+    /** Why playWhenReady last went false; drives the SmartPlay focus retry. */
+    private var lastPlayWhenReadyFalseReason = -1
+    private var smartPlayRetryJob: Job? = null
+
     // listening-stats accumulators, flushed alongside position persists
     private var statsLastPositionMs = -1L
     private var statsLastWallMs = -1L
@@ -185,6 +189,11 @@ class PlaybackService : MediaLibraryService() {
             // becoming-noisy have their own reason codes), whether playback
             // is suppressed (transient focus loss), and stream errors.
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                // remembered so the SmartPlay retry can tell "the system took
+                // the audio away" from "the user pressed pause" — the two are
+                // indistinguishable from isPlaying alone, and retrying over a
+                // deliberate pause would be a bug, not a fix
+                if (!playWhenReady) lastPlayWhenReadyFalseReason = reason
                 PlaybackJournal.log(
                     "pwr",
                     "value=$playWhenReady reason=${pwrReasonName(reason)} " +
@@ -916,11 +925,76 @@ class PlaybackService : MediaLibraryService() {
         super.onDestroy()
     }
 
+    /**
+     * A SmartPlay start whose audio focus was DENIED gets a few more tries.
+     *
+     * A timed automation (Tasker, a morning routine) fires at a wall-clock
+     * moment that has nothing to do with what else is making noise: an alarm,
+     * a call, navigation. Media3 requests focus on play(), and when the
+     * request is refused it clears playWhenReady with
+     * AUDIO_FOCUS_LOSS — the queue is filled and correct, but nothing plays,
+     * and there is nobody watching to press play again. Journal evidence: two
+     * of these seconds apart at 06:09, another at 11:33, and BOTH recovered
+     * about ten seconds later once the other app let go — so the window we
+     * need to cover is short, and retrying at all is the whole fix.
+     *
+     * Bounded on purpose. It gives up after [SMARTPLAY_RETRY_DELAYS_MS] (~30s
+     * total) rather than ambushing the user mid-alarm minutes later, and it
+     * stops immediately when:
+     *  - playback started (nothing to fix),
+     *  - the last playWhenReady=false was USER_REQUEST — the user paused, and
+     *    fighting that would be worse than the bug,
+     *  - a player error is showing (retrying a broken stream just loops), or
+     *  - the head episode is no longer current — something else took over and
+     *    this retry no longer speaks for what's loaded.
+     */
+    private suspend fun retryAfterFocusDenial(name: String?, headEpisodeId: Long) {
+        for (delayMs in SMARTPLAY_RETRY_DELAYS_MS) {
+            val player = mediaSession?.player ?: return
+            if (player.isPlaying) return
+            if (lastPlayWhenReadyFalseReason !=
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+            ) {
+                return
+            }
+            if (player.playerError != null) return
+            if (currentEpisodeId() != headEpisodeId) return
+            delay(delayMs)
+            val p = mediaSession?.player ?: return
+            if (p.isPlaying || currentEpisodeId() != headEpisodeId) return
+            if (lastPlayWhenReadyFalseReason !=
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+            ) {
+                return
+            }
+            PlaybackJournal.log(
+                "smartplay-retry",
+                "name=$name ep=$headEpisodeId after=${delayMs}ms " +
+                    "state=${p.playbackState}"
+            )
+            p.play()
+            delay(1_000)
+            val settled = mediaSession?.player ?: return
+            if (settled.isPlaying) {
+                PlaybackJournal.log(
+                    "smartplay-retry", "name=$name recovered ep=$headEpisodeId"
+                )
+                return
+            }
+        }
+        PlaybackJournal.log(
+            "smartplay-retry", "name=$name gave up ep=$headEpisodeId"
+        )
+    }
+
     /** Synchronous position write for teardown paths (see onDestroy). */
     private fun persistPositionBlocking(source: String) {
         val player = mediaSession?.player ?: return
         val episodeId = currentEpisodeId() ?: return
         val position = player.currentPosition
+        // same transition-window guard as persistPosition: a teardown that
+        // lands mid-transition must not zero the incoming episode either
+        if (clobbersIncomingEpisode(episodeId, position, source)) return
         val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0
         kotlinx.coroutines.runBlocking(Dispatchers.IO) {
             runCatching {
@@ -1113,10 +1187,49 @@ class PlaybackService : MediaLibraryService() {
         val player = mediaSession?.player ?: return
         val episodeId = currentEpisodeId() ?: return
         val position = player.currentPosition
+        if (clobbersIncomingEpisode(episodeId, position, source)) return
         val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0
         serviceScope.launch(Dispatchers.IO) {
             app.repository.savePosition(episodeId, position, duration, source)
         }
+    }
+
+    /**
+     * The transition window guard — this is a DATA-LOSS guard, not a tidiness
+     * one. `seekToNextMediaItem()` (Done, skip) and auto-advance flip
+     * `currentMediaItem` to the incoming episode IMMEDIATELY, but its
+     * position is still 0: the seek to its saved resume point happens later,
+     * asynchronously, in [onEpisodeStarted]. The player goes briefly
+     * not-playing across that transition, which fires
+     * `onIsPlayingChanged(false)` -> `persistPosition("pause")` — and that
+     * captured (newEpisodeId, 0) and wrote it straight over the incoming
+     * episode's bookmark, which [PodcastRepository.savePosition] stores
+     * unconditionally. Field report + journal proof: an episode last saved
+     * at 79m of 91m was zeroed by a single `pos pause ep=... pos=0` the
+     * instant Done advanced onto it, a week later, and then started from the
+     * intro skip.
+     *
+     * Invisible in the common case only because the next queue item is
+     * usually fresh, where 0 is the correct value anyway.
+     *
+     * [activeEpisodeId] is the id [onEpisodeStarted] has committed to AFTER
+     * deciding the start position, so inside the vulnerable window it is
+     * still the OUTGOING episode and the ids differ. Every legitimate
+     * zero-write — including a deliberate seek to 0 and then a pause — comes
+     * with the ids matching.
+     */
+    private fun clobbersIncomingEpisode(
+        episodeId: Long,
+        position: Long,
+        source: String
+    ): Boolean {
+        if (position > 0L || episodeId == activeEpisodeId) return false
+        PlaybackJournal.log(
+            "pos",
+            "skip $source ep=$episodeId pos=0 (not yet started; " +
+                "active=$activeEpisodeId)"
+        )
+        return true
     }
 
     /**
@@ -1394,12 +1507,14 @@ class PlaybackService : MediaLibraryService() {
                 episodes.map { episodeToItem(it) }, 0, startMs
             )
             player.prepare()
+            lastPlayWhenReadyFalseReason = -1
             player.play()
             // outcome probe: two seconds later, did playback actually begin?
             // A start killed by the FGS wall, focus denial, or a stream
             // error shows up here with the state that explains it — this
             // line IS the "queued but didn't play" diagnostic.
-            serviceScope.launch {
+            smartPlayRetryJob?.cancel()
+            smartPlayRetryJob = serviceScope.launch {
                 delay(2_000)
                 val p = mediaSession?.player ?: return@launch
                 PlaybackJournal.log(
@@ -1409,6 +1524,7 @@ class PlaybackService : MediaLibraryService() {
                         "suppress=${p.playbackSuppressionReason} " +
                         "ep=${currentEpisodeId()}"
                 )
+                retryAfterFocusDenial(name, head.id)
             }
             SessionResult(SessionResult.RESULT_SUCCESS)
         }
@@ -1417,6 +1533,9 @@ class PlaybackService : MediaLibraryService() {
         private const val TICK_MS = 1_000L
         private const val SAVE_EVERY_TICKS = 5
         private const val WIDGET_EVERY_TICKS = 30
+
+        /** Waits BETWEEN SmartPlay focus retries; ~30s of cover in total. */
+        private val SMARTPLAY_RETRY_DELAYS_MS = longArrayOf(3_000, 5_000, 8_000, 12_000)
 
         const val ACTION_SLEEP_TIMER = "com.stepcast.app.SLEEP_TIMER"
         const val ACTION_DONE_DELETE = "com.stepcast.app.DONE_DELETE"

@@ -175,6 +175,32 @@ build or one confused on-device session.
   far-left. Not fixable app-side; the Done button is a toggle instead.
 - **onAddMediaItems** resolves bare mediaIds to playable URIs for
   controllers that only know episode ids (Android Auto, resumption).
+- **A media-item transition can ERASE the incoming episode's bookmark.**
+  `seekToNextMediaItem()` (Done/skip) and auto-advance flip
+  `currentMediaItem` to the next episode *immediately*, while its position
+  is still 0 — the seek to its saved resume point happens later, async, in
+  `onEpisodeStarted`. The player goes briefly not-playing across that
+  transition, firing `onIsPlayingChanged(false)` → `persistPosition("pause")`,
+  which captured `(newEpisodeId, 0)` and wrote it over a real saved
+  position (`savePosition` stores unconditionally). Journal proof: an
+  episode last saved at 79m of 91m was zeroed by one
+  `pos pause ep=… pos=0` the instant Done advanced onto it a week later,
+  then started from the intro skip (`raise … from=14 to=10000`). Normally
+  invisible because the next queue item is usually fresh, where 0 is
+  correct. Guarded by `clobbersIncomingEpisode()`: refuse a zero write
+  whose episode isn't the one `onEpisodeStarted` has committed to
+  (`activeEpisodeId`, set *after* the seek decision). Any new persist path
+  must go through it.
+- **A denied audio-focus request is indistinguishable from a focus loss.**
+  Both surface as `PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS`, so a
+  timed SmartPlay that collides with an alarm/call/navigation fills the
+  queue and silently never plays. Transient loss is different again — that
+  one shows as `playbackSuppressionReason`, not a playWhenReady flip. The
+  service retries a handful of times over ~30s
+  (`SMARTPLAY_RETRY_DELAYS_MS`); observed recoveries were ~10s out. The
+  retry MUST check the last playWhenReady=false reason — `isPlaying`
+  alone can't tell "the system took the audio" from "the user pressed
+  pause", and retrying over a deliberate pause is worse than the bug.
 
 ## WorkManager / downloads
 

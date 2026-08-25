@@ -164,7 +164,10 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   **resumes a half-listened head where it left off** (widget and in-app
   paths alike) and **never splices the previously-playing episode into
   the new playlist** — its position is saved, so switching back resumes
-  it.
+  it. A start that collides with something else holding the audio (an
+  alarm, a call, navigation) **retries for about 30 seconds** instead of
+  leaving a filled queue that never plays — but never over a pause you
+  pressed yourself.
 - **Stations**: a SmartPlay flagged as a Station keeps refilling the queue
   from its rules whenever it runs low — service-side, so it works with
   the app process dead. Any manual play ends the station.
