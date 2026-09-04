@@ -17,8 +17,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.foundation.layout.Spacer
@@ -55,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -351,6 +355,23 @@ private fun QueueList(
                 }
             }
         }
+    }
+
+    /**
+     * The measured height of the row a drag would pass NEXT, or null at the
+     * edge. The swap threshold has to be measured against this same height
+     * the swap then compensates by — thresholding on the dragged row's own
+     * height instead drifts as soon as the list mixes one- and two-line
+     * titles, which is most of the time.
+     */
+    fun neighborHeight(episodeId: Long, screenDown: Boolean): Float? {
+        val list = working ?: latestQueue
+        val i = list.indexOfFirst { it.id == episodeId }
+        val step = if (screenDown != latestReversed) 1 else -1
+        val j = i + step
+        if (i < 0 || j !in list.indices) return null
+        return (rowHeights[list[j].id] ?: rowHeights[episodeId])?.toFloat()
+            ?: fallbackRowPx
     }
 
     /**
@@ -663,20 +684,8 @@ private fun QueueList(
                                     draggingId = null
                                 }
                             }
-                            detectDragGestures(
-                                onDragStart = {
-                                    settleJob?.cancel()
-                                    draggingId = episode.id
-                                    dragOffset = 0f
-                                    view.performHapticFeedback(
-                                        android.view.HapticFeedbackConstants.LONG_PRESS
-                                    )
-                                },
-                                onDragEnd = { finishDrag() },
-                                onDragCancel = { finishDrag() }
-                            ) { change, dragAmount ->
-                                change.consume()
-                                dragOffset += dragAmount.y
+                            fun applyDrag(deltaY: Float) {
+                                dragOffset += deltaY
                                 // hard stop at the ends of the list: without
                                 // this the row rides over the now-playing strip
                                 val list = working ?: latestQueue
@@ -689,15 +698,59 @@ private fun QueueList(
                                 if (i == upLimit) {
                                     dragOffset = dragOffset.coerceAtLeast(-edgeSlopPx)
                                 }
-                                val rowPx =
-                                    rowHeights[episode.id]?.toFloat() ?: fallbackRowPx
-                                if (dragOffset > rowPx * 0.55f) {
+                                // 0.55, not 0.5, is deliberate hysteresis: a
+                                // swap leaves the offset at -0.45h, clear of
+                                // the reverse threshold, so a jittery finger
+                                // can't oscillate across the boundary.
+                                val downPx = neighborHeight(episode.id, screenDown = true)
+                                if (downPx != null && dragOffset > downPx * 0.55f) {
                                     val passed = swapNeighbor(episode.id, screenDown = true)
                                     if (passed != null) dragOffset -= passed
-                                } else if (dragOffset < -rowPx * 0.55f) {
+                                    return
+                                }
+                                val upPx = neighborHeight(episode.id, screenDown = false)
+                                if (upPx != null && dragOffset < -upPx * 0.55f) {
                                     val passed = swapNeighbor(episode.id, screenDown = false)
                                     if (passed != null) dragOffset += passed
                                 }
+                            }
+
+                            // Hand-rolled rather than detectDragGestures, for
+                            // two reasons that both read as "the row doesn't
+                            // follow my finger":
+                            //  - detectDragGestures DISCARDS the touch-slop
+                            //    distance. It reports only deltas AFTER slop
+                            //    is exceeded, so the row starts a slop's worth
+                            //    behind the finger and stays there for the
+                            //    whole gesture. The await* form below hands
+                            //    that overslop back, so the row starts under
+                            //    the finger instead of trailing it.
+                            //  - its slop phase doesn't consume, so the
+                            //    LazyColumn underneath could win the gesture
+                            //    and scroll instead of reordering.
+                            // Vertical-only slop also stops a sloppy diagonal
+                            // grab from needing a bigger 2D movement first.
+                            awaitEachGesture {
+                                val first = awaitFirstDown(requireUnconsumed = false)
+                                var overSlop = 0f
+                                val dragged = awaitVerticalTouchSlopOrCancellation(
+                                    first.id
+                                ) { change, over ->
+                                    change.consume()
+                                    overSlop = over
+                                } ?: return@awaitEachGesture
+                                settleJob?.cancel()
+                                draggingId = episode.id
+                                dragOffset = 0f
+                                view.performHapticFeedback(
+                                    android.view.HapticFeedbackConstants.LONG_PRESS
+                                )
+                                if (overSlop != 0f) applyDrag(overSlop)
+                                verticalDrag(dragged.id) { change ->
+                                    change.consume()
+                                    applyDrag(change.positionChange().y)
+                                }
+                                finishDrag()
                             }
                         }
                 )

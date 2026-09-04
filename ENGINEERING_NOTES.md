@@ -191,6 +191,15 @@ build or one confused on-device session.
   whose episode isn't the one `onEpisodeStarted` has committed to
   (`activeEpisodeId`, set *after* the seek decision). Any new persist path
   must go through it.
+- **Everything that must be true before the first sample goes in ONE
+  lookup.** `onEpisodeStarted` runs after the transition has already made
+  the new item current, so every suspending round trip before a correction
+  lands is audible with the OUTGOING episode's settings. The resume seek
+  was already hoisted for this; per-show SPEED was not, and beta-reported
+  as "the first second of the new show plays at the last show's speed".
+  `episodeStartSettings()` now returns row + intro skip + speed together
+  and all three apply at the top. Anything else that shapes the first
+  second belongs in that call, not in the bookkeeping below it.
 - **A denied audio-focus request is indistinguishable from a focus loss.**
   Both surface as `PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS`, so a
   timed SmartPlay that collides with an alarm/call/navigation fills the
@@ -234,6 +243,22 @@ build or one confused on-device session.
   swipe handlers, pill callbacks.)
 - **Extension functions can't be called fully-qualified** — `verticalScroll`,
   `detectVerticalDragGestures` each broke a CI build. Import them.
+- **`detectDragGestures` throws the touch slop away.** It reports deltas
+  only AFTER slop is exceeded and never hands the slop distance back, so a
+  dragged item starts ~a slop behind the finger and stays there for the
+  whole gesture ("doesn't follow your finger", beta report). Its slop phase
+  also doesn't consume, so a LazyColumn underneath can win the gesture and
+  scroll instead. For drag-to-reorder use
+  `awaitEachGesture { awaitFirstDown(requireUnconsumed = false);
+  awaitVerticalTouchSlopOrCancellation(id) { change, over -> … } ;
+  verticalDrag(id) { … } }` — it yields `overSlop` to apply, and consuming
+  from the slop callback onward keeps the list from stealing the drag.
+- **Reorder thresholds must measure the row being PASSED,** not the row
+  being dragged, because the swap compensates the offset by the passed
+  row's height — mixing those two drifts as soon as list rows differ in
+  height (one- vs two-line titles). Keep the threshold at 0.55 of that
+  height, not 0.5: a swap then leaves the offset at -0.45h, clear of the
+  reverse threshold, so a jittery finger can't oscillate across it.
 - `var x by remember { … }` needs BOTH `getValue`/`setValue` imports.
 - **Swipe-to-dismiss over a scroll container needs nested scroll, not a
   drag detector.** `pointerInput { detectVerticalDragGestures … }` on (or

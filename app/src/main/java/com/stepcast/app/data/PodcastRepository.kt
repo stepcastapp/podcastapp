@@ -403,9 +403,27 @@ class PodcastRepository(
     }
 
     /** Per-podcast playback speed for the episode's feed; 0 = no override. */
-    suspend fun speedFor(episodeId: Long): Float {
-        val episode = db.episodeDao().get(episodeId) ?: return 0f
-        return db.podcastDao().get(episode.podcastId)?.playbackSpeed ?: 0f
+    /**
+     * Everything the player needs to start an episode CORRECTLY, in one
+     * podcast lookup: the row itself (for the resume position), the intro
+     * skip, and the per-show speed.
+     *
+     * Fetched together on purpose. These are all applied in the moment
+     * between a media-item transition and the first audible output, and
+     * every separate suspending round trip in there is a window where
+     * ExoPlayer is already producing sound with the PREVIOUS episode's
+     * settings — heard as a flash of the intro, or (field report) the first
+     * second of a slow show playing at the fast show's speed.
+     */
+    suspend fun episodeStartSettings(episodeId: Long): EpisodeStartSettings {
+        val episode = db.episodeDao().get(episodeId)
+            ?: return EpisodeStartSettings(null, 0L, 0f)
+        val podcast = db.podcastDao().get(episode.podcastId)
+        return EpisodeStartSettings(
+            episode = episode,
+            introMs = (podcast?.introSkipSec ?: 0).coerceAtLeast(0) * 1000L,
+            speed = podcast?.playbackSpeed ?: 0f
+        )
     }
 
     // ---- virtual feeds (local folder as a feed) ---------------------------
@@ -1228,8 +1246,6 @@ class PodcastRepository(
         PlaybackJournal.log("played", "$source ep=$episodeId")
     }
 
-    suspend fun introSkipMsFor(episodeId: Long): Long = skipMsFor(episodeId, intro = true)
-
     suspend fun outroSkipMsFor(episodeId: Long): Long = skipMsFor(episodeId, intro = false)
 
     private suspend fun skipMsFor(episodeId: Long, intro: Boolean): Long {
@@ -1470,6 +1486,13 @@ class PodcastRepository(
 
 /** One podcast's downloaded-file footprint. */
 data class StorageUsage(val podcast: Podcast, val episodes: Int, val bytes: Long)
+
+/** See [PodcastRepository.episodeStartSettings]. speed 0 = follow the global. */
+data class EpisodeStartSettings(
+    val episode: Episode?,
+    val introMs: Long,
+    val speed: Float
+)
 
 /** How far back the New-episodes inbox reaches. */
 private const val INBOX_WINDOW_MS = 14L * 86_400_000
