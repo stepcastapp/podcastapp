@@ -262,6 +262,16 @@ build or one confused on-device session.
   the same ordering is harmless there and the trap only appears when you
   drop down to the raw pointer API. `positionChangeIgnoreConsumed()` is
   the escape hatch if the order genuinely can't be helped.
+- **Turn `animateItem` placement OFF for every row during a drag, not just
+  the dragged one.** The dragged row moves by `translationY` (instant); a
+  displaced neighbour on a placement spring does not, and while the finger
+  keeps moving each new swap restarts that spring before the previous one
+  settled. The neighbour ends up permanently mid-flight, and because the
+  dragged row is above it on zIndex the pair renders as a single squashed
+  double-row with the lower title and its ✕ clipped. Stiffening the spring
+  was tried first and was not enough — the mismatch is instant-vs-animated,
+  not fast-vs-slow. Instant reflow during the drag is less decorative but
+  always correct.
 - **Auto-scroll during a drag must compensate the drag offset.**
   `translationY` and `LazyListState` offsets are different coordinate
   spaces: `scrollBy` moves every item's layout offset, and a row held at

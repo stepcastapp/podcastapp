@@ -459,8 +459,10 @@ private fun QueueList(
         return moved
     }
 
-    // stiffer than the default so a displaced row clears the dragged one's
-    // path quickly — the slow spring left rows overlapping mid-shuffle
+    // Stiffer than the default so a displaced row clears quickly. Used for
+    // ordinary list changes only — during a drag every row reflows instantly
+    // instead (see animateItem below); stiffening the spring was the earlier
+    // attempt at the same problem and it was not enough.
     val placementSpec = androidx.compose.animation.core.spring(
         stiffness = androidx.compose.animation.core.Spring.StiffnessMedium,
         visibilityThreshold = androidx.compose.ui.unit.IntOffset(1, 1)
@@ -488,14 +490,21 @@ private fun QueueList(
                 // lifted rows cast a shadow so the reorder reads as a pick-up
                 shadowElevation = if (draggingId == episode.id) 6.dp else 0.dp,
                 modifier = Modifier
-                    // the dragged row is positioned by translationY alone; a
-                    // placement animation on top of it fights the finger
+                    // NO placement animation for ANY row while a drag is live.
+                    // The dragged row is positioned by translationY, which is
+                    // instant; a displaced neighbour on a spring is not, and
+                    // while the finger keeps moving each new swap restarts
+                    // that spring before the last one settled. The neighbour
+                    // is then permanently mid-flight, and since the dragged
+                    // row sits above it on zIndex the pair renders as one
+                    // squashed double-row with the lower one's title and ✕
+                    // clipped (screen recording). Instant reflow is less
+                    // decorative but it is always correct: every non-dragged
+                    // row is exactly in its slot, so the only thing offset is
+                    // the row under the finger. The spring is still used for
+                    // ordinary list changes outside a drag.
                     .animateItem(
-                        placementSpec = if (draggingId == episode.id) {
-                            null
-                        } else {
-                            placementSpec
-                        }
+                        placementSpec = if (draggingId != null) null else placementSpec
                     )
                     .onSizeChanged { rowHeights[episode.id] = it.height }
                     .fillMaxWidth()
