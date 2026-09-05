@@ -331,31 +331,6 @@ private fun QueueList(
     // for the bottom-anchored queue mode is needed here.
     val edgeThresholdPx = with(LocalDensity.current) { 64.dp.toPx() }
     val maxAutoScrollPx = with(LocalDensity.current) { 16.dp.toPx() }
-    LaunchedEffect(draggingId) {
-        if (draggingId == null) return@LaunchedEffect
-        while (isActive) {
-            androidx.compose.runtime.withFrameNanos { }
-            val id = draggingId ?: break
-            val info = listState.layoutInfo
-            val itemInfo = info.visibleItemsInfo.firstOrNull { it.key == id } ?: continue
-            val viewportHeight = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
-            val currentTop = itemInfo.offset + dragOffset
-            val currentBottom = currentTop + itemInfo.size
-            val distanceFromTop = currentTop
-            val distanceFromBottom = viewportHeight - currentBottom
-            when {
-                distanceFromTop < edgeThresholdPx -> {
-                    val strength = (1f - (distanceFromTop / edgeThresholdPx)).coerceIn(0.15f, 1f)
-                    listState.scrollBy(-maxAutoScrollPx * strength)
-                }
-                distanceFromBottom < edgeThresholdPx -> {
-                    val strength =
-                        (1f - (distanceFromBottom / edgeThresholdPx)).coerceIn(0.15f, 1f)
-                    listState.scrollBy(maxAutoScrollPx * strength)
-                }
-            }
-        }
-    }
 
     /**
      * The measured height of the row a drag would pass NEXT, or null at the
@@ -392,6 +367,79 @@ private fun QueueList(
         view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
         return (rowHeights[neighbor.id] ?: rowHeights[episodeId])?.toFloat()
             ?: fallbackRowPx
+    }
+
+    /**
+     * Moves the dragged row by [deltaY] and swaps it past neighbours as it
+     * crosses them. Lives out here, not inside the gesture, because the
+     * auto-scroller has to feed it too — see the LaunchedEffect below.
+     */
+    fun applyDrag(episodeId: Long, deltaY: Float) {
+        dragOffset += deltaY
+        // hard stop at the ends of the list: without this the row rides
+        // over the now-playing strip
+        val list = working ?: latestQueue
+        val i = list.indexOfFirst { it.id == episodeId }
+        val downLimit = if (latestReversed) 0 else list.lastIndex
+        val upLimit = if (latestReversed) list.lastIndex else 0
+        if (i == downLimit) dragOffset = dragOffset.coerceAtMost(edgeSlopPx)
+        if (i == upLimit) dragOffset = dragOffset.coerceAtLeast(-edgeSlopPx)
+        // 0.55, not 0.5, is deliberate hysteresis: a swap leaves the offset
+        // at -0.45h, clear of the reverse threshold, so a jittery finger
+        // can't oscillate across the boundary.
+        val downPx = neighborHeight(episodeId, screenDown = true)
+        if (downPx != null && dragOffset > downPx * 0.55f) {
+            val passed = swapNeighbor(episodeId, screenDown = true)
+            if (passed != null) dragOffset -= passed
+            return
+        }
+        val upPx = neighborHeight(episodeId, screenDown = false)
+        if (upPx != null && dragOffset < -upPx * 0.55f) {
+            val passed = swapNeighbor(episodeId, screenDown = false)
+            if (passed != null) dragOffset += passed
+        }
+    }
+
+    // Auto-scroll while a drag holds near the top/bottom of the visible list
+    // — without this, a drag can't reach past whatever happens to be
+    // on-screen when the gesture starts. Sign is purely "reveal content
+    // above" (negative) vs "reveal content below" (positive): that scroll
+    // convention is independent of reverseLayout, so no special-casing for
+    // the bottom-anchored queue mode is needed here.
+    //
+    // Declared down here, after applyDrag, because it FEEDS applyDrag: a
+    // scroll moves every item's layout offset, but translationY lives in a
+    // different coordinate space and knows nothing about it. Left
+    // uncompensated the row slid away from the stationary finger by exactly
+    // the distance scrolled — a screen recording showed it two full rows
+    // adrift — and no swaps fired at all, because dragOffset never changed
+    // while the finger was still. scrollBy returns what it actually
+    // consumed, which is precisely the correction, and pushing it through
+    // applyDrag both pins the row and lets it swap its way along.
+    LaunchedEffect(draggingId) {
+        if (draggingId == null) return@LaunchedEffect
+        while (isActive) {
+            androidx.compose.runtime.withFrameNanos { }
+            val id = draggingId ?: break
+            val info = listState.layoutInfo
+            val itemInfo = info.visibleItemsInfo.firstOrNull { it.key == id } ?: continue
+            val viewportHeight = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
+            val currentTop = itemInfo.offset + dragOffset
+            val currentBottom = currentTop + itemInfo.size
+            val distanceFromTop = currentTop
+            val distanceFromBottom = viewportHeight - currentBottom
+            when {
+                distanceFromTop < edgeThresholdPx -> {
+                    val strength = (1f - (distanceFromTop / edgeThresholdPx)).coerceIn(0.15f, 1f)
+                    applyDrag(id, listState.scrollBy(-maxAutoScrollPx * strength))
+                }
+                distanceFromBottom < edgeThresholdPx -> {
+                    val strength =
+                        (1f - (distanceFromBottom / edgeThresholdPx)).coerceIn(0.15f, 1f)
+                    applyDrag(id, listState.scrollBy(maxAutoScrollPx * strength))
+                }
+            }
+        }
     }
 
     /**
@@ -684,37 +732,6 @@ private fun QueueList(
                                     draggingId = null
                                 }
                             }
-                            fun applyDrag(deltaY: Float) {
-                                dragOffset += deltaY
-                                // hard stop at the ends of the list: without
-                                // this the row rides over the now-playing strip
-                                val list = working ?: latestQueue
-                                val i = list.indexOfFirst { it.id == episode.id }
-                                val downLimit = if (latestReversed) 0 else list.lastIndex
-                                val upLimit = if (latestReversed) list.lastIndex else 0
-                                if (i == downLimit) {
-                                    dragOffset = dragOffset.coerceAtMost(edgeSlopPx)
-                                }
-                                if (i == upLimit) {
-                                    dragOffset = dragOffset.coerceAtLeast(-edgeSlopPx)
-                                }
-                                // 0.55, not 0.5, is deliberate hysteresis: a
-                                // swap leaves the offset at -0.45h, clear of
-                                // the reverse threshold, so a jittery finger
-                                // can't oscillate across the boundary.
-                                val downPx = neighborHeight(episode.id, screenDown = true)
-                                if (downPx != null && dragOffset > downPx * 0.55f) {
-                                    val passed = swapNeighbor(episode.id, screenDown = true)
-                                    if (passed != null) dragOffset -= passed
-                                    return
-                                }
-                                val upPx = neighborHeight(episode.id, screenDown = false)
-                                if (upPx != null && dragOffset < -upPx * 0.55f) {
-                                    val passed = swapNeighbor(episode.id, screenDown = false)
-                                    if (passed != null) dragOffset += passed
-                                }
-                            }
-
                             // Hand-rolled rather than detectDragGestures, for
                             // two reasons that both read as "the row doesn't
                             // follow my finger":
@@ -745,7 +762,7 @@ private fun QueueList(
                                 view.performHapticFeedback(
                                     android.view.HapticFeedbackConstants.LONG_PRESS
                                 )
-                                if (overSlop != 0f) applyDrag(overSlop)
+                                if (overSlop != 0f) applyDrag(episode.id, overSlop)
                                 verticalDrag(dragged.id) { change ->
                                     // READ BEFORE CONSUMING. positionChange()
                                     // returns Offset.Zero once the change is
@@ -757,7 +774,7 @@ private fun QueueList(
                                     // ordering was harmless there.
                                     val deltaY = change.positionChange().y
                                     change.consume()
-                                    applyDrag(deltaY)
+                                    applyDrag(episode.id, deltaY)
                                 }
                                 finishDrag()
                             }

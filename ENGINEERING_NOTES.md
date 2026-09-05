@@ -262,6 +262,16 @@ build or one confused on-device session.
   the same ordering is harmless there and the trap only appears when you
   drop down to the raw pointer API. `positionChangeIgnoreConsumed()` is
   the escape hatch if the order genuinely can't be helped.
+- **Auto-scroll during a drag must compensate the drag offset.**
+  `translationY` and `LazyListState` offsets are different coordinate
+  spaces: `scrollBy` moves every item's layout offset, and a row held at
+  `translationY = dragOffset` knows nothing about it, so the row slides
+  away from a stationary finger by exactly the distance scrolled (screen
+  recording: two full rows adrift). Worse, no swaps fire either — the
+  finger isn't moving, so `dragOffset` never changes and no threshold is
+  crossed. `scrollBy` RETURNS what it consumed, which is precisely the
+  correction: feed it back through the same drag-apply path (not just into
+  `dragOffset`) so the row both stays pinned and swaps its way along.
 - **Reorder thresholds must measure the row being PASSED,** not the row
   being dragged, because the swap compensates the offset by the passed
   row's height — mixing those two drifts as soon as list rows differ in
