@@ -736,8 +736,8 @@ private fun QueueList(
                                 val dragged = awaitVerticalTouchSlopOrCancellation(
                                     first.id
                                 ) { change, over ->
-                                    change.consume()
                                     overSlop = over
+                                    change.consume()
                                 } ?: return@awaitEachGesture
                                 settleJob?.cancel()
                                 draggingId = episode.id
@@ -747,8 +747,17 @@ private fun QueueList(
                                 )
                                 if (overSlop != 0f) applyDrag(overSlop)
                                 verticalDrag(dragged.id) { change ->
+                                    // READ BEFORE CONSUMING. positionChange()
+                                    // returns Offset.Zero once the change is
+                                    // consumed, so consuming first fed every
+                                    // delta in as 0 and the row never moved —
+                                    // drag looked completely dead. The old
+                                    // detectDragGestures form handed the delta
+                                    // in as a parameter, which is why the same
+                                    // ordering was harmless there.
+                                    val deltaY = change.positionChange().y
                                     change.consume()
-                                    applyDrag(change.positionChange().y)
+                                    applyDrag(deltaY)
                                 }
                                 finishDrag()
                             }

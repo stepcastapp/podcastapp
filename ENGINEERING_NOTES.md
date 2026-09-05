@@ -253,6 +253,15 @@ build or one confused on-device session.
   awaitVerticalTouchSlopOrCancellation(id) { change, over -> … } ;
   verticalDrag(id) { … } }` — it yields `overSlop` to apply, and consuming
   from the slop callback onward keeps the list from stealing the drag.
+- **`positionChange()` returns `Offset.Zero` once the change is consumed.**
+  So in a hand-rolled `verticalDrag`/`drag` loop, READ the delta and THEN
+  consume — `change.consume(); applyDrag(change.positionChange().y)` feeds
+  every delta in as 0 and the drag looks completely dead (shipped exactly
+  that; reorder stopped working outright). `detectDragGestures` hands the
+  delta in as a lambda PARAMETER computed before consumption, which is why
+  the same ordering is harmless there and the trap only appears when you
+  drop down to the raw pointer API. `positionChangeIgnoreConsumed()` is
+  the escape hatch if the order genuinely can't be helped.
 - **Reorder thresholds must measure the row being PASSED,** not the row
   being dragged, because the swap compensates the offset by the passed
   row's height — mixing those two drifts as soon as list rows differ in
