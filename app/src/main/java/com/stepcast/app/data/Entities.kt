@@ -179,7 +179,7 @@ fun Episode.resumeStartMs(): Long {
     return if (nearEnd) 0L else positionMs
 }
 
-/** Per-category settings: manual ordering and refresh cadence. */
+/** Per-category settings: manual ordering, refresh cadence, retention defaults. */
 @Entity(tableName = "categories")
 data class CategoryMeta(
     @PrimaryKey val name: String,
@@ -191,7 +191,11 @@ data class CategoryMeta(
      * cycle anchors to — e.g. 300 + every 6h refreshes at 5:00, 11:00,
      * 17:00, 23:00. -1 = plain interval since the last refresh.
      */
-    val anchorMinutes: Int = -1
+    val anchorMinutes: Int = -1,
+    /** Category-level retention: auto-keep newest N unplayed; 0 = no default. */
+    val keepDownloads: Int = 0,
+    /** Category-level retention: delete downloads older than N days; 0 = no default. */
+    val maxAgeDays: Int = 0
 )
 
 /**

@@ -710,6 +710,12 @@ interface CategoryDao {
     @Query("UPDATE categories SET sortOrder = :sortOrder WHERE name = :name")
     suspend fun setSort(name: String, sortOrder: Int)
 
+    @Query(
+        "UPDATE categories SET keepDownloads = :keep, maxAgeDays = :maxAge " +
+            "WHERE name = :name"
+    )
+    suspend fun updateRetention(name: String, keep: Int, maxAge: Int)
+
     @Query("DELETE FROM categories WHERE name = :name")
     suspend fun delete(name: String)
 }

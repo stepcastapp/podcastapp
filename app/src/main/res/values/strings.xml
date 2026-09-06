@@ -366,6 +366,10 @@
     <string name="pause">Pause</string>
     <string name="anchor_time_explainer">With a reference time, refreshes land at that time and every interval after it (5:00 + 6h = 5:00, 11:00, 17:00, 23:00). Empty = interval since last refresh.</string>
     <string name="bulk_apply_explainer">Apply to every podcast in this category (leave empty to keep their own settings):</string>
+    <string name="category_retention_explainer">Category retention defaults:</string>
+    <string name="reset_podcasts_to_category">Reset all podcasts to these settings</string>
+    <string name="reset_retention_confirm_title">Reset podcast retention?</string>
+    <string name="retention_reset_done">Podcast retention reset to category settings</string>
     <string name="n_selected">%1$d selected</string>
     <string name="expand_item_cd">Expand %1$s</string>
     <string name="collapse_item_cd">Collapse %1$s</string>
@@ -569,5 +573,9 @@
     <plurals name="set_category_for_podcasts">
         <item quantity="one">Set category for %1$d podcast</item>
         <item quantity="other">Set category for %1$d podcasts</item>
+    </plurals>
+    <plurals name="reset_retention_confirm_body">
+        <item quantity="one">This will set %1$d podcast to auto-keep %2$d and max age %3$d days, overriding any individual settings.</item>
+        <item quantity="other">This will set %1$d podcasts to auto-keep %2$d and max age %3$d days, overriding any individual settings.</item>
     </plurals>
 </resources>

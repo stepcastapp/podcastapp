@@ -252,11 +252,15 @@ fun CategoryScreen(
     }
 
     if (editOpen) {
+        val catMeta = metas.firstOrNull { it.name == category }
         var name by remember { mutableStateOf(category) }
-        // refresh cadence moved to per-show rules (Settings -> Schedule);
-        // categories now carry organization + bulk retention only
-        var bulkKeepText by remember { mutableStateOf("") }
-        var bulkAgeText by remember { mutableStateOf("") }
+        var bulkKeepText by remember {
+            mutableStateOf(catMeta?.keepDownloads?.takeIf { it > 0 }?.toString() ?: "")
+        }
+        var bulkAgeText by remember {
+            mutableStateOf(catMeta?.maxAgeDays?.takeIf { it > 0 }?.toString() ?: "")
+        }
+        var resetConfirmOpen by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { editOpen = false },
             title = { Text(stringResource(R.string.edit_category)) },
@@ -274,7 +278,7 @@ fun CategoryScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        stringResource(R.string.bulk_apply_explainer),
+                        stringResource(R.string.category_retention_explainer),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 10.dp)
@@ -299,6 +303,13 @@ fun CategoryScreen(
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
+                    }
+                    TextButton(
+                        onClick = { resetConfirmOpen = true },
+                        enabled = bulkKeepText.isNotEmpty() || bulkAgeText.isNotEmpty(),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text(stringResource(R.string.reset_podcasts_to_category))
                     }
                     Text(
                         stringResource(R.string.mark_played_when_older_than),
@@ -336,18 +347,9 @@ fun CategoryScreen(
                     editOpen = false
                     val newName = name.trim()
                     scope.launch {
-                        // bulk retention only when the user typed something
-                        val bulkKeep = bulkKeepText.toIntOrNull()
-                        val bulkAge = bulkAgeText.toIntOrNull()
-                        if (bulkKeep != null || bulkAge != null) {
-                            for (member in members) {
-                                repository.setRetention(
-                                    member.id,
-                                    bulkKeep ?: member.keepDownloads,
-                                    bulkAge ?: member.maxAgeDays
-                                )
-                            }
-                        }
+                        val bulkKeep = bulkKeepText.toIntOrNull() ?: 0
+                        val bulkAge = bulkAgeText.toIntOrNull() ?: 0
+                        repository.setCategoryRetention(category, bulkKeep, bulkAge)
                         if (newName.isNotEmpty() && newName != category) {
                             repository.renameCategory(category, newName)
                             onRenamed(newName)
@@ -365,6 +367,44 @@ fun CategoryScreen(
                 }
             }
         )
+
+        if (resetConfirmOpen) {
+            val keepVal = bulkKeepText.toIntOrNull() ?: 0
+            val ageVal = bulkAgeText.toIntOrNull() ?: 0
+            AlertDialog(
+                onDismissRequest = { resetConfirmOpen = false },
+                title = { Text(stringResource(R.string.reset_retention_confirm_title)) },
+                text = {
+                    Text(
+                        pluralStringResource(
+                            R.plurals.reset_retention_confirm_body,
+                            members.size,
+                            members.size,
+                            keepVal,
+                            ageVal
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        resetConfirmOpen = false
+                        editOpen = false
+                        scope.launch {
+                            repository.setCategoryRetention(category, keepVal, ageVal)
+                            repository.resetPodcastsToCategory(category)
+                            snackbar.showSnackbar(
+                                context.getString(R.string.retention_reset_done)
+                            )
+                        }
+                    }) { Text(stringResource(R.string.confirm)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { resetConfirmOpen = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
+        }
     }
 
     if (removeConfirmOpen) {

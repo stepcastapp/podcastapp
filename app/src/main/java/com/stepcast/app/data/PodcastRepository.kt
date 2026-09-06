@@ -1185,12 +1185,19 @@ class PodcastRepository(
         db.episodeDao().clearDownload(episodeId)
     }
 
-    /** Bulk-applies download retention to every podcast in a category. */
-    suspend fun setRetentionForCategory(category: String, keep: Int, maxAgeDays: Int) {
+    /** Saves category-level retention defaults and applies them to every member podcast. */
+    suspend fun setCategoryRetention(category: String, keep: Int, maxAge: Int) {
+        val k = keep.coerceIn(0, 50)
+        val a = maxAge.coerceIn(0, 3650)
+        db.categoryDao().updateRetention(category, k, a)
+    }
+
+    /** Resets every podcast in the category to the category's stored retention. */
+    suspend fun resetPodcastsToCategory(category: String) {
+        val meta = db.categoryDao().get(category) ?: return
         for (id in db.podcastCategoryDao().memberIds(category)) {
-            db.podcastDao().updateRetention(
-                id, keep.coerceIn(0, 50), maxAgeDays.coerceIn(0, 3650)
-            )
+            db.podcastDao().updateRetention(id, meta.keepDownloads, meta.maxAgeDays)
+            autoManageDownloads(id)
         }
     }
 

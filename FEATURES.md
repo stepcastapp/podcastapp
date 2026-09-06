@@ -278,7 +278,9 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   (bare-newline tracklists render line-per-entry), Play + Close.
 - Multi-select on podcast screens for bulk queue/download.
 - "Mark older than…" bulk played (per show and per category), mark-all,
-  per-category retention bulk-apply.
+  per-category retention bulk-apply. **Reset all podcasts** button in
+  category settings overrides individual podcast retention with the
+  category defaults (with confirmation dialog).
 
 ## Widgets (Glance)
 
