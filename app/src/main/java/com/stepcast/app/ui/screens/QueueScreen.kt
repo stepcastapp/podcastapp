@@ -300,6 +300,7 @@ private fun QueueList(
     var working by remember {
         mutableStateOf<List<com.stepcast.app.data.Episode>?>(null)
     }
+    var fingerDown by remember { mutableStateOf(false) }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     // pointerInput blocks only restart when their key changes, so the drag
     // handlers hold FIRST-composition captures forever. Anything they read
@@ -319,7 +320,7 @@ private fun QueueList(
     val view = androidx.compose.ui.platform.LocalView.current
     val display = working ?: queue
 
-    LaunchedEffect(queue) {
+    LaunchedEffect(queue, draggingId) {
         if (draggingId == null) working = null
     }
 
@@ -421,6 +422,7 @@ private fun QueueList(
         while (isActive) {
             androidx.compose.runtime.withFrameNanos { }
             val id = draggingId ?: break
+            if (!fingerDown) break
             val info = listState.layoutInfo
             val itemInfo = info.visibleItemsInfo.firstOrNull { it.key == id } ?: continue
             val viewportHeight = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
@@ -768,22 +770,19 @@ private fun QueueList(
                                 settleJob?.cancel()
                                 draggingId = episode.id
                                 dragOffset = 0f
+                                fingerDown = true
                                 view.performHapticFeedback(
                                     android.view.HapticFeedbackConstants.LONG_PRESS
                                 )
                                 if (overSlop != 0f) applyDrag(episode.id, overSlop)
-                                verticalDrag(dragged.id) { change ->
-                                    // READ BEFORE CONSUMING. positionChange()
-                                    // returns Offset.Zero once the change is
-                                    // consumed, so consuming first fed every
-                                    // delta in as 0 and the row never moved —
-                                    // drag looked completely dead. The old
-                                    // detectDragGestures form handed the delta
-                                    // in as a parameter, which is why the same
-                                    // ordering was harmless there.
-                                    val deltaY = change.positionChange().y
-                                    change.consume()
-                                    applyDrag(episode.id, deltaY)
+                                try {
+                                    verticalDrag(dragged.id) { change ->
+                                        val deltaY = change.positionChange().y
+                                        change.consume()
+                                        applyDrag(episode.id, deltaY)
+                                    }
+                                } finally {
+                                    fingerDown = false
                                 }
                                 finishDrag()
                             }
