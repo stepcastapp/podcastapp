@@ -84,6 +84,22 @@ import com.stepcast.app.ui.theme.ScreenTitle
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+// TEMPORARY drag diagnostics — remove together with the fix they inform.
+// Everything logged under this tag: `adb logcat -s StepcastDrag`.
+private const val DRAG_TAG = "StepcastDrag"
+
+/**
+ * Renders [list] as the positions its episodes held in [base], so a reorder
+ * reads as "0,2,1,3" instead of a wall of row ids.
+ */
+private fun orderSig(
+    list: List<com.stepcast.app.data.Episode>,
+    base: List<com.stepcast.app.data.Episode>
+): String {
+    val idx = base.withIndex().associate { (i, e) -> e.id to i }
+    return list.joinToString(",") { idx[it.id]?.toString() ?: "?" }
+}
+
 @Composable
 fun QueueScreen(
     repository: PodcastRepository,
@@ -319,8 +335,21 @@ private fun QueueList(
     val view = androidx.compose.ui.platform.LocalView.current
     val display = working ?: queue
 
+    // TEMPORARY drag diagnostics. Plain arrays, not state: these must not
+    // recompose anything, or the measurement perturbs what it measures.
+    val diagSwaps = remember { intArrayOf(0) }
+    val diagStartIdx = remember { intArrayOf(-1) }
+    val diagLastLogNs = remember { longArrayOf(0L) }
+    fun dlog(msg: String) {
+        android.util.Log.d(DRAG_TAG, msg)
+    }
+
     LaunchedEffect(queue) {
-        if (draggingId == null) working = null
+        dlog("QUEUE emit n=${queue.size} dragging=$draggingId working=${working?.size}")
+        if (draggingId == null) {
+            if (working != null) dlog("CLEAR working (not dragging)")
+            working = null
+        }
     }
 
     // auto-scroll while a drag holds near the top/bottom of the visible
@@ -365,8 +394,15 @@ private fun QueueList(
         list[i] = neighbor
         working = list
         view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-        return (rowHeights[neighbor.id] ?: rowHeights[episodeId])?.toFloat()
+        val passed = (rowHeights[neighbor.id] ?: rowHeights[episodeId])?.toFloat()
             ?: fallbackRowPx
+        diagSwaps[0]++
+        dlog(
+            "SWAP #${diagSwaps[0]} ${if (screenDown) "down" else "up"} $i->$j " +
+                "passed=$passed measured=${rowHeights[neighbor.id] != null} " +
+                "order=${orderSig(list, latestQueue)}"
+        )
+        return passed
     }
 
     /**
@@ -388,12 +424,24 @@ private fun QueueList(
         // at -0.45h, clear of the reverse threshold, so a jittery finger
         // can't oscillate across the boundary.
         val downPx = neighborHeight(episodeId, screenDown = true)
+        val upPx = neighborHeight(episodeId, screenDown = false)
+        // throttled: at ~100Hz an unthrottled log is itself a source of jank
+        val now = System.nanoTime()
+        if (now - diagLastLogNs[0] > 50_000_000L) {
+            diagLastLogNs[0] = now
+            dlog(
+                "DRAG d=%+.1f off=%+.1f idx=%d downNeed=%s upNeed=%s".format(
+                    deltaY, dragOffset, i,
+                    downPx?.let { "%.0f".format(it * 0.55f) } ?: "edge",
+                    upPx?.let { "%.0f".format(-it * 0.55f) } ?: "edge"
+                )
+            )
+        }
         if (downPx != null && dragOffset > downPx * 0.55f) {
             val passed = swapNeighbor(episodeId, screenDown = true)
             if (passed != null) dragOffset -= passed
             return
         }
-        val upPx = neighborHeight(episodeId, screenDown = false)
         if (upPx != null && dragOffset < -upPx * 0.55f) {
             val passed = swapNeighbor(episodeId, screenDown = false)
             if (passed != null) dragOffset += passed
@@ -726,9 +774,31 @@ private fun QueueList(
                         .pointerInput(episode.id) {
                             fun finishDrag() {
                                 val snapshot = working
+                                // TEMPORARY: the whole point of this build.
+                                // Says, per drag, whether any swap fired and
+                                // whether a changed order actually reached
+                                // replaceQueue.
+                                val base = latestQueue
+                                val startIdx = diagStartIdx[0]
+                                val endIdx = snapshot
+                                    ?.indexOfFirst { it.id == episode.id } ?: startIdx
+                                val changed = snapshot != null &&
+                                    snapshot.map { it.id } != base.map { it.id }
+                                val verdict = if (snapshot == null) {
+                                    "swaps=${diagSwaps[0]} NO WRITE (working null)"
+                                } else {
+                                    "swaps=${diagSwaps[0]} wrote=$changed " +
+                                        "$startIdx->$endIdx"
+                                }
+                                dlog(
+                                    "END $verdict base=${base.size} " +
+                                        "order=${snapshot?.let { orderSig(it, base) } ?: "-"}"
+                                )
+                                scope.launch { snackbar.showSnackbar("drag: $verdict") }
                                 settleJob = scope.launch {
                                     if (snapshot != null) {
                                         repository.replaceQueue(snapshot.map { it.id })
+                                        dlog("WROTE ${snapshot.size} ids")
                                     }
                                     // ease the row into its slot instead of
                                     // snapping the leftover offset to zero
@@ -768,6 +838,14 @@ private fun QueueList(
                                 settleJob?.cancel()
                                 draggingId = episode.id
                                 dragOffset = 0f
+                                diagSwaps[0] = 0
+                                diagStartIdx[0] =
+                                    latestQueue.indexOfFirst { it.id == episode.id }
+                                dlog(
+                                    "START id=${episode.id} idx=${diagStartIdx[0]}" +
+                                        "/${latestQueue.size} rev=$latestReversed " +
+                                        "slop=$overSlop heights=${rowHeights.size}"
+                                )
                                 view.performHapticFeedback(
                                     android.view.HapticFeedbackConstants.LONG_PRESS
                                 )
