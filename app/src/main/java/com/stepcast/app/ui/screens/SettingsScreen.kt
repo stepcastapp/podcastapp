@@ -91,6 +91,10 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    var recapOpen by remember { mutableStateOf(false) }
+    if (recapOpen) {
+        RecapDialog(repository = repository, onDismiss = { recapOpen = false })
+    }
     val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
     var reorderDialogOpen by remember { mutableStateOf(false) }
     var diagnosticsOpen by remember { mutableStateOf(false) }
@@ -825,6 +829,11 @@ fun SettingsScreen(
             toggleSection("Stats")
         }
         if (sectionOpen("Stats")) {
+        ActionRow(
+            label = stringResource(R.string.recap_action),
+            hint = stringResource(R.string.recap_action_hint),
+            onClick = { recapOpen = true }
+        )
         val statsSince = if (com.stepcast.app.data.ListenStats.sinceMs > 0) {
             " " + stringResource(
                 R.string.stats_since,

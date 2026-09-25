@@ -588,4 +588,36 @@
     <string name="restore_previous_phone">Restore library from your previous phone</string>
     <string name="restore_previous_phone_done">Restored %1$d shows — episodes and listening progress fill in as feeds refresh</string>
     <string name="restore_previous_phone_failed">Couldn\'t restore the library snapshot</string>
+    <string name="season_short">S%1$d</string>
+    <string name="episode_short">E%1$d</string>
+    <string name="episode_type_trailer">Trailer</string>
+    <string name="episode_type_bonus">Bonus</string>
+    <string name="episode_with_people">With %1$s</string>
+    <string name="support_the_show">Support the show</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="bookmark_note_hint">Note for %1$s (optional)</string>
+    <string name="no_bookmarks_yet">No bookmarks in this episode yet</string>
+    <string name="delete_bookmark">Delete bookmark</string>
+    <string name="add_bookmark_at">Bookmark %1$s</string>
+    <string name="recap_action">Your year in listening</string>
+    <string name="recap_action_hint">Time listened, top shows, busiest month and streaks</string>
+    <string name="recap_title">%1$d in listening</string>
+    <string name="recap_listened">listened</string>
+    <string name="recap_saved">%1$s saved by speed and silence trimming</string>
+    <string name="recap_top_shows">Top shows</string>
+    <string name="recap_busiest_month">Busiest month: %1$s</string>
+    <string name="recap_empty">Listening time is tracked per day from this version on.</string>
+    <plurals name="recap_finished">
+        <item quantity="one">%d episode finished</item>
+        <item quantity="other">%d episodes finished</item>
+    </plurals>
+    <plurals name="recap_days">
+        <item quantity="one">%d day with listening</item>
+        <item quantity="other">%d days with listening</item>
+    </plurals>
+    <plurals name="recap_streak">
+        <item quantity="one">Longest streak: %d day</item>
+        <item quantity="other">Longest streak: %d days</item>
+    </plurals>
+    <string name="loading">Loading…</string>
 </resources>

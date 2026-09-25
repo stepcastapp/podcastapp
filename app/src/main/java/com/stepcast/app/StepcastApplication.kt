@@ -43,6 +43,13 @@ class StepcastApplication : Application(), coil.ImageLoaderFactory {
                 com.stepcast.app.download.DownloadWorker
                     .reconcileOrphans(this@StepcastApplication)
             }
+            // the v24 upgrade creates the show-notes search index empty;
+            // fill it once, off the launch path (new rows index themselves)
+            val flags = getSharedPreferences("stepcast_flags", MODE_PRIVATE)
+            if (!flags.getBoolean("ftsBuilt", false)) {
+                runCatching { repository.rebuildSearchIndex() }
+                    .onSuccess { flags.edit().putBoolean("ftsBuilt", true).apply() }
+            }
         }
         RefreshWorker.schedulePeriodic(this)
         if (com.stepcast.app.data.AppSettings.autoBackupFolder != null) {

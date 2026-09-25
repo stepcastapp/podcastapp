@@ -83,6 +83,12 @@ interface PodcastDao {
     )
     suspend fun updateLocalScan(id: Long, lastRefreshed: Long, fallbackArt: String?)
 
+    @Query(
+        "UPDATE podcasts SET fundingUrl = :url, fundingLabel = :label WHERE id = :id " +
+            "AND (fundingUrl IS NOT :url OR fundingLabel IS NOT :label)"
+    )
+    suspend fun updateFunding(id: Long, url: String?, label: String?)
+
     /** HTTP validators from the last full fetch (see [Podcast.feedEtag]). */
     @Query(
         "UPDATE podcasts SET feedEtag = :etag, feedLastModified = :lastModified WHERE id = :id"
@@ -322,6 +328,16 @@ interface EpisodeDao {
     )
     suspend fun searchByTitle(query: String): List<Episode>
 
+    /**
+     * Full-text search over titles AND show notes. [match] is an FTS4
+     * MATCH expression built by the repository (prefix terms, quoted).
+     */
+    @Query(
+        "SELECT e.* FROM episodes e INNER JOIN episodes_fts f ON e.id = f.docid " +
+            "WHERE episodes_fts MATCH :match ORDER BY e.pubDateMs DESC LIMIT 100"
+    )
+    suspend fun searchFullText(match: String): List<Episode>
+
     /** Release-pattern inference input (ScheduleEngine's Automatic mode). */
     @Query(
         "SELECT pubDateMs FROM episodes WHERE podcastId = :podcastId " +
@@ -510,6 +526,10 @@ interface EpisodeDao {
     )
     suspend fun notifyCandidates(afterId: Long, sinceMs: Long): List<NotifyCandidate>
 
+    /** Episodes finished inside a time window (the yearly recap). */
+    @Query("SELECT COUNT(*) FROM episodes WHERE played = 1 AND playedAtMs BETWEEN :fromMs AND :toMs")
+    suspend fun countPlayedBetween(fromMs: Long, toMs: Long): Int
+
     @Query("SELECT COALESCE(MAX(id), 0) FROM episodes")
     suspend fun maxId(): Long
 
@@ -538,6 +558,23 @@ interface EpisodeDao {
     /** Each show's newest episode date, for the Library's "most recent" sort. */
     @Query("SELECT podcastId, MAX(pubDateMs) AS latestMs FROM episodes GROUP BY podcastId")
     fun observeLatestEpisodeDates(): Flow<List<PodcastLatestEpisode>>
+
+    /** Podcasting 2.0 / iTunes numbering + people; guarded so unchanged rows aren't rewritten. */
+    @Query(
+        "UPDATE episodes SET season = :season, episodeNumber = :episodeNumber, " +
+            "episodeType = :episodeType, persons = :persons " +
+            "WHERE podcastId = :podcastId AND guid = :guid AND (" +
+            "season IS NOT :season OR episodeNumber IS NOT :episodeNumber OR " +
+            "episodeType IS NOT :episodeType OR persons IS NOT :persons)"
+    )
+    suspend fun updateEpisodeExtras(
+        podcastId: Long,
+        guid: String,
+        season: Int?,
+        episodeNumber: Int?,
+        episodeType: String?,
+        persons: String?
+    )
 
     /** Backup restore of one episode's listening state (merged by the caller). */
     @Query(
@@ -874,4 +911,46 @@ interface PodcastCategoryDao {
 
     @Query("DELETE FROM podcast_categories WHERE category = :category")
     suspend fun deleteCategory(category: String)
+}
+
+@Dao
+interface BookmarkDao {
+    @Query("SELECT * FROM bookmarks WHERE episodeId = :episodeId ORDER BY positionMs")
+    fun observeFor(episodeId: Long): Flow<List<Bookmark>>
+
+    @Query("SELECT * FROM bookmarks ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<Bookmark>>
+
+    @Query("SELECT * FROM bookmarks")
+    suspend fun listAll(): List<Bookmark>
+
+    @Insert
+    suspend fun insert(bookmark: Bookmark): Long
+
+    @Query("UPDATE bookmarks SET note = :note WHERE id = :id")
+    suspend fun setNote(id: Long, note: String)
+
+    @Query("DELETE FROM bookmarks WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM bookmarks WHERE episodeId IN (SELECT id FROM episodes WHERE podcastId = :podcastId)")
+    suspend fun deleteForPodcast(podcastId: Long)
+}
+
+@Dao
+interface ListenDailyDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(row: ListenDaily): Long
+
+    @Query(
+        "UPDATE listen_daily SET wallMs = wallMs + :wallMs, contentMs = contentMs + :contentMs " +
+            "WHERE day = :day AND podcastId = :podcastId"
+    )
+    suspend fun bump(day: Long, podcastId: Long, wallMs: Long, contentMs: Long): Int
+
+    @Query("SELECT * FROM listen_daily WHERE day BETWEEN :fromDay AND :toDay")
+    suspend fun range(fromDay: Long, toDay: Long): List<ListenDaily>
+
+    @Query("DELETE FROM listen_daily")
+    suspend fun clear()
 }

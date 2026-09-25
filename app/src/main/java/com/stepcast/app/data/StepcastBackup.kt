@@ -163,6 +163,7 @@ object StepcastBackup {
             EpisodeStateRestore.encodeEntries(repository.exportEpisodeStates())
         )
         root.put("queue", EpisodeStateRestore.encodeQueue(repository.exportQueueRefs()))
+        root.put("bookmarks", EpisodeStateRestore.encodeBookmarks(repository.exportBookmarks()))
         val saved = JSONArray()
         for ((podcast, episodes) in repository.savedEpisodeShows()) {
             for (ep in episodes) {
@@ -362,7 +363,10 @@ object StepcastBackup {
         // exist (right now for shows already here, on first refresh for stubs)
         val states = EpisodeStateRestore.decodeEntries(json.optJSONObject("episodeState"))
         val queueRefs = EpisodeStateRestore.decodeQueue(json.optJSONArray("queue"))
-        EpisodeStateRestore.stage(context, states, queueRefs)
+        EpisodeStateRestore.stage(
+            context, states, queueRefs,
+            EpisodeStateRestore.decodeBookmarks(json.optJSONArray("bookmarks"))
+        )
         val knownFeeds = HashMap<String, Long>().apply {
             putAll(urlToId)
             putAll(savedShowIds)

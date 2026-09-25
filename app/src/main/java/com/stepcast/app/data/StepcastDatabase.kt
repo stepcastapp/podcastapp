@@ -11,9 +11,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         Podcast::class, Episode::class, QueueItem::class,
         SmartPlay::class, SmartPlayEntry::class, CategoryMeta::class,
-        ListenStat::class, PodcastCategory::class
+        ListenStat::class, PodcastCategory::class,
+        EpisodeFts::class, Bookmark::class, ListenDaily::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = true
 )
 abstract class StepcastDatabase : RoomDatabase() {
@@ -24,6 +25,8 @@ abstract class StepcastDatabase : RoomDatabase() {
     abstract fun categoryDao(): CategoryDao
     abstract fun podcastCategoryDao(): PodcastCategoryDao
     abstract fun listenStatDao(): ListenStatDao
+    abstract fun bookmarkDao(): BookmarkDao
+    abstract fun listenDailyDao(): ListenDailyDao
 
     companion object {
         @Volatile
@@ -241,13 +244,94 @@ abstract class StepcastDatabase : RoomDatabase() {
             }
         }
 
+        // Review wave 5 features: full-text search, Podcasting 2.0 extras,
+        // bookmarks, per-day listening (yearly recap). SQL copied from the
+        // exported 24.json so Room's validation matches exactly. The FTS
+        // index is filled in the background afterwards (rebuildSearchIndex),
+        // not here — on a 100k-episode library that would stall the first
+        // launch after the update.
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE podcasts ADD COLUMN fundingUrl TEXT")
+                db.execSQL("ALTER TABLE podcasts ADD COLUMN fundingLabel TEXT")
+                db.execSQL("ALTER TABLE episodes ADD COLUMN season INTEGER")
+                db.execSQL("ALTER TABLE episodes ADD COLUMN episodeNumber INTEGER")
+                db.execSQL("ALTER TABLE episodes ADD COLUMN episodeType TEXT")
+                db.execSQL("ALTER TABLE episodes ADD COLUMN persons TEXT")
+                db.execSQL(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS `episodes_fts` USING FTS4(" +
+                        "`title` TEXT NOT NULL, `description` TEXT NOT NULL, content=`episodes`)"
+                )
+                createFtsTriggers(db)
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `bookmarks` (`id` INTEGER PRIMARY KEY " +
+                        "AUTOINCREMENT NOT NULL, `episodeId` INTEGER NOT NULL, " +
+                        "`positionMs` INTEGER NOT NULL, `note` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_bookmarks_episodeId` " +
+                        "ON `bookmarks` (`episodeId`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `listen_daily` (`day` INTEGER NOT NULL, " +
+                        "`podcastId` INTEGER NOT NULL, `wallMs` INTEGER NOT NULL, " +
+                        "`contentMs` INTEGER NOT NULL, PRIMARY KEY(`day`, `podcastId`))"
+                )
+                // the parser now reads more (content:encoded, seasons, P2.0
+                // tags): force one full fetch per feed so existing rows
+                // pick it up instead of 304-ing forever
+                db.execSQL("UPDATE podcasts SET feedEtag = NULL, feedLastModified = NULL")
+            }
+        }
+
+        /**
+         * FTS sync triggers scoped to the INDEXED columns. Room's generated
+         * ones fire on every UPDATE of episodes — and a position save hits
+         * the playing episode every few seconds, which re-tokenized its
+         * whole show notes each time. Same trigger names, so Room still
+         * finds what it expects; recreated on every open (see [Callback]).
+         */
+        internal fun createFtsTriggers(db: SupportSQLiteDatabase) {
+            val prefix = "room_fts_content_sync_episodes_fts_"
+            db.execSQL("DROP TRIGGER IF EXISTS ${prefix}BEFORE_UPDATE")
+            db.execSQL("DROP TRIGGER IF EXISTS ${prefix}AFTER_UPDATE")
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS ${prefix}BEFORE_UPDATE BEFORE UPDATE OF " +
+                    "`title`, `description` ON `episodes` BEGIN DELETE FROM `episodes_fts` " +
+                    "WHERE `docid`=OLD.`rowid`; END"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS ${prefix}BEFORE_DELETE BEFORE DELETE ON " +
+                    "`episodes` BEGIN DELETE FROM `episodes_fts` WHERE `docid`=OLD.`rowid`; END"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS ${prefix}AFTER_UPDATE AFTER UPDATE OF " +
+                    "`title`, `description` ON `episodes` BEGIN INSERT INTO `episodes_fts`" +
+                    "(`docid`, `title`, `description`) VALUES (NEW.`rowid`, NEW.`title`, " +
+                    "NEW.`description`); END"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS ${prefix}AFTER_INSERT AFTER INSERT ON " +
+                    "`episodes` BEGIN INSERT INTO `episodes_fts`(`docid`, `title`, " +
+                    "`description`) VALUES (NEW.`rowid`, NEW.`title`, NEW.`description`); END"
+            )
+        }
+
+        /** Swaps Room's unscoped FTS triggers for the scoped ones on every open. */
+        private object Callback : RoomDatabase.Callback() {
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                createFtsTriggers(db)
+            }
+        }
+
         /** Every real migration, oldest first — shared with the migration tests. */
         val ALL_MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
             MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
             MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
             MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
-            MIGRATION_21_22, MIGRATION_22_23
+            MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24
         )
 
         fun get(context: Context): StepcastDatabase =
@@ -258,6 +342,7 @@ abstract class StepcastDatabase : RoomDatabase() {
                     "stepcast.db"
                 )
                     .addMigrations(*ALL_MIGRATIONS)
+                    .addCallback(Callback)
                     // Destructive fallback ONLY in debug builds. In release,
                     // a missing migration or schema-hash mismatch must crash
                     // (fixable with an update) — never silently delete the

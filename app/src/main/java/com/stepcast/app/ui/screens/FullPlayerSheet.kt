@@ -26,6 +26,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.HourglassTop
@@ -97,6 +98,7 @@ fun FullPlayerSheet(
     var notesOpen by remember { mutableStateOf(false) }
     var skipsOpen by remember { mutableStateOf(false) }
     var transcriptOpen by remember { mutableStateOf(false) }
+    var bookmarksOpen by remember { mutableStateOf(false) }
 
     // the playing episode + its podcast, for notes / feed / skip settings
     var episode by remember {
@@ -430,7 +432,9 @@ fun FullPlayerSheet(
             // name; the speed chips fold into a dialog behind the readout)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
+                // evenly spread, no fixed gaps: six buttons (speed, skips,
+                // sleep, transcript, bookmarks, share) must fit a 360dp phone
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 var speedOpen by remember { mutableStateOf(false) }
@@ -520,7 +524,6 @@ fun FullPlayerSheet(
                         }
                     )
                 }
-                Spacer(Modifier.width(20.dp))
                 IconButton(
                     onClick = { skipsOpen = true },
                     enabled = podcast != null
@@ -538,7 +541,6 @@ fun FullPlayerSheet(
                         }
                     )
                 }
-                Spacer(Modifier.width(20.dp))
                 IconButton(onClick = { sleepDialogOpen = true }) {
                     val sleepArmed = state.sleepEndsAtMs != null || state.sleepAtEpisodeEnd
                     androidx.compose.material3.BadgedBox(badge = {
@@ -567,7 +569,6 @@ fun FullPlayerSheet(
                     }
                 }
                 if (episode?.transcriptUrl != null) {
-                    Spacer(Modifier.width(20.dp))
                     IconButton(onClick = { transcriptOpen = true }) {
                         Icon(
                             Icons.Rounded.Subtitles,
@@ -576,7 +577,13 @@ fun FullPlayerSheet(
                         )
                     }
                 }
-                Spacer(Modifier.width(20.dp))
+                IconButton(onClick = { bookmarksOpen = true }, enabled = episode != null) {
+                    Icon(
+                        Icons.Rounded.BookmarkAdd,
+                        contentDescription = stringResource(R.string.bookmarks),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 val context = androidx.compose.ui.platform.LocalContext.current
                 IconButton(
                     onClick = {
@@ -721,6 +728,18 @@ fun FullPlayerSheet(
                 dismissButton = {
                     TextButton(onClick = { skipsOpen = false }) { Text(stringResource(R.string.cancel)) }
                 }
+            )
+        }
+    }
+
+    if (bookmarksOpen) {
+        episode?.let { ep ->
+            BookmarksDialog(
+                episode = ep,
+                repository = repository,
+                currentPositionMs = progress.positionMs,
+                onSeek = { player.seekTo(it) },
+                onDismiss = { bookmarksOpen = false }
             )
         }
     }

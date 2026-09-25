@@ -448,6 +448,7 @@ private fun EpisodeRowContent(
                 Text(
                     listOf(
                         podcastTitle.orEmpty(),
+                        episodeNumbering(episode),
                         Formatters.episodeMeta(episode.pubDateMs, episode.durationMs)
                     )
                         .filter { it.isNotEmpty() }
@@ -625,6 +626,23 @@ private fun EpisodeRowContent(
     }
 }
 
+/**
+ * "S2 E5", "E12", "Trailer", "S3 Bonus" — the feed's own numbering and
+ * episode type; empty when the feed states neither.
+ */
+@Composable
+fun episodeNumbering(episode: Episode): String {
+    val parts = buildList {
+        episode.season?.let { add(stringResource(R.string.season_short, it)) }
+        episode.episodeNumber?.let { add(stringResource(R.string.episode_short, it)) }
+        when (episode.episodeType) {
+            "trailer" -> add(stringResource(R.string.episode_type_trailer))
+            "bonus" -> add(stringResource(R.string.episode_type_bonus))
+        }
+    }
+    return parts.joinToString(" ")
+}
+
 /** Show-notes dialog, shared by episode lists, the queue, and the player. */
 @Composable
 fun EpisodeDetailsDialog(
@@ -641,7 +659,18 @@ fun EpisodeDetailsDialog(
         title = { Text(episode.title) },
         text = {
             Column {
-                val meta = Formatters.episodeMeta(episode.pubDateMs, episode.durationMs)
+                val meta = listOf(
+                    episodeNumbering(episode),
+                    Formatters.episodeMeta(episode.pubDateMs, episode.durationMs)
+                ).filter { it.isNotEmpty() }.joinToString(" • ")
+                episode.persons?.let { people ->
+                    Text(
+                        stringResource(R.string.episode_with_people, people),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
                 if (meta.isNotEmpty()) {
                     Text(
                         meta,

@@ -180,6 +180,7 @@ class PodcastRepository(
         val moved = adoptMovedFeed(podcast, fetched)
         val feed = moved.feed
         val newIds = insertEpisodesReturningIds(podcastId, feed)
+        db.podcastDao().updateFunding(podcastId, feed.fundingUrl, feed.fundingLabel)
         // only once the rows are safely stored: validators saved before a
         // failed insert would turn every later refresh into a 304 that
         // never delivers those episodes
@@ -333,6 +334,10 @@ class PodcastRepository(
         // dropped the delta when another writer created the row in between
         db.listenStatDao().insert(ListenStat(podcastId, 0, 0))
         db.listenStatDao().bump(podcastId, wallMs, contentMs)
+        // per-day too: the yearly recap needs WHEN, not just how much
+        val day = java.time.LocalDate.now().toEpochDay()
+        db.listenDailyDao().insert(ListenDaily(day, podcastId))
+        db.listenDailyDao().bump(day, podcastId, wallMs, contentMs)
     }
 
     suspend fun topListenStats(limit: Int = 8): List<Pair<Podcast, ListenStat>> =
@@ -340,7 +345,117 @@ class PodcastRepository(
             db.podcastDao().get(stat.podcastId)?.let { it to stat }
         }
 
-    suspend fun clearListenStats() = db.listenStatDao().clear()
+    suspend fun clearListenStats() {
+        db.listenStatDao().clear()
+        db.listenDailyDao().clear()
+    }
+
+    // ---- yearly recap -------------------------------------------------------
+
+    data class YearRecap(
+        val year: Int,
+        val wallMs: Long,
+        val contentMs: Long,
+        val episodesFinished: Int,
+        val activeDays: Int,
+        /** Top shows by listening time, largest first. */
+        val topShows: List<Pair<Podcast, Long>>,
+        /** 1..12 → listening ms. */
+        val byMonth: Map<Int, Long>,
+        val longestStreakDays: Int
+    )
+
+    suspend fun yearRecap(year: Int): YearRecap = withContext(Dispatchers.IO) {
+        val zone = java.time.ZoneId.systemDefault()
+        val first = java.time.LocalDate.of(year, 1, 1)
+        val last = java.time.LocalDate.of(year, 12, 31)
+        val rows = db.listenDailyDao().range(first.toEpochDay(), last.toEpochDay())
+        val byShow = rows.groupBy { it.podcastId }.mapValues { (_, r) -> r.sumOf { it.wallMs } }
+        val shows = podcastsByIds(byShow.keys).associateBy { it.id }
+        val days = rows.filter { it.wallMs > 0 }.map { it.day }.toSortedSet()
+        var longest = 0
+        var run = 0
+        var prev = Long.MIN_VALUE
+        for (d in days) {
+            run = if (d == prev + 1) run + 1 else 1
+            longest = maxOf(longest, run)
+            prev = d
+        }
+        YearRecap(
+            year = year,
+            wallMs = rows.sumOf { it.wallMs },
+            contentMs = rows.sumOf { it.contentMs },
+            episodesFinished = db.episodeDao().countPlayedBetween(
+                first.atStartOfDay(zone).toInstant().toEpochMilli(),
+                last.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+            ),
+            activeDays = days.size,
+            topShows = byShow.entries.sortedByDescending { it.value }
+                .mapNotNull { (id, ms) -> shows[id]?.let { it to ms } }
+                .take(5),
+            byMonth = rows.groupBy { java.time.LocalDate.ofEpochDay(it.day).monthValue }
+                .mapValues { (_, r) -> r.sumOf { it.wallMs } },
+            longestStreakDays = longest
+        )
+    }
+
+    // ---- bookmarks ----------------------------------------------------------
+
+    fun bookmarksFor(episodeId: Long) = db.bookmarkDao().observeFor(episodeId).distinctUntilChanged()
+
+    val allBookmarks = db.bookmarkDao().observeAll().shared()
+
+    suspend fun addBookmark(episodeId: Long, positionMs: Long, note: String = ""): Long =
+        db.bookmarkDao().insert(Bookmark(episodeId = episodeId, positionMs = positionMs, note = note))
+
+    suspend fun setBookmarkNote(id: Long, note: String) = db.bookmarkDao().setNote(id, note)
+
+    suspend fun deleteBookmark(id: Long) = db.bookmarkDao().delete(id)
+
+    suspend fun allBookmarkList(): List<Bookmark> = db.bookmarkDao().listAll()
+
+    /** Bookmarks as portable references for the backup. */
+    suspend fun exportBookmarks(): List<EpisodeStateRestore.BookmarkRef> {
+        val list = db.bookmarkDao().listAll()
+        if (list.isEmpty()) return emptyList()
+        val episodes = list.map { it.episodeId }.distinct()
+            .mapNotNull { db.episodeDao().get(it) }.associateBy { it.id }
+        val feeds = podcastsByIds(episodes.values.map { it.podcastId })
+            .filter { it.localFolderUri == null }
+            .associate { it.id to it.feedUrl }
+        return list.mapNotNull { b ->
+            val ep = episodes[b.episodeId] ?: return@mapNotNull null
+            val feed = feeds[ep.podcastId] ?: return@mapNotNull null
+            EpisodeStateRestore.BookmarkRef(feed, ep.guid, ep.audioUrl, b.positionMs, b.note, b.createdAt)
+        }
+    }
+
+    /** Restore: skips a bookmark already present at the same spot. */
+    suspend fun restoreBookmarks(podcastId: Long, refs: List<EpisodeStateRestore.BookmarkRef>) {
+        for (r in refs) {
+            val id = resolveEpisodeId(podcastId, r.guid, r.audioUrl) ?: continue
+            val existing = db.bookmarkDao().listAll()
+                .any { it.episodeId == id && it.positionMs == r.positionMs }
+            if (!existing) {
+                db.bookmarkDao().insert(
+                    Bookmark(episodeId = id, positionMs = r.positionMs, note = r.note, createdAt = r.createdAt)
+                )
+            }
+        }
+    }
+
+    // ---- full-text search ---------------------------------------------------
+
+    /**
+     * (Re)builds the show-notes search index from the episodes table. Run
+     * once in the background after the v24 upgrade (the migration only
+     * creates the empty index); new/changed rows stay indexed via triggers.
+     */
+    suspend fun rebuildSearchIndex() = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.execSQL(
+            "INSERT INTO episodes_fts(episodes_fts) VALUES('rebuild')"
+        )
+    }
 
     suspend fun setRetention(podcastId: Long, keepDownloads: Int, maxAgeDays: Int) {
         db.podcastDao().updateRetention(
@@ -408,6 +523,7 @@ class PodcastRepository(
         // states and, on interruption, orphaned rows
         db.withTransaction {
             db.queueDao().removeForPodcast(podcastId)
+            db.bookmarkDao().deleteForPodcast(podcastId)
             db.episodeDao().deleteForPodcast(podcastId)
             db.podcastCategoryDao().removeAllFor(podcastId)
             // rowids get recycled — a leaked stats row would gift the NEXT
@@ -909,8 +1025,19 @@ class PodcastRepository(
         val shows = allPodcasts().filter { it.title.contains(q, ignoreCase = true) }
         // escape LIKE wildcards: searching "100%" must not match everything
         val escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        val episodes = db.episodeDao().searchByTitle(escaped)
-        return shows to episodes
+        val titleHits = db.episodeDao().searchByTitle(escaped)
+        // then show notes: every word must appear (prefix match, so "clim"
+        // finds "climate"); title hits stay first
+        val terms = q.split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotBlank() }
+        val notesHits = if (terms.isEmpty()) {
+            emptyList()
+        } else {
+            runCatching {
+                db.episodeDao().searchFullText(terms.joinToString(" ") { "$it*" })
+            }.getOrDefault(emptyList())
+        }
+        val seen = titleHits.mapTo(HashSet()) { it.id }
+        return shows to (titleHits + notesHits.filter { seen.add(it.id) }).take(100)
     }
 
     suspend fun queueSnapshot(): List<Episode> = db.queueDao().queueSnapshot()
@@ -1415,7 +1542,11 @@ class PodcastRepository(
         durationMs = durationMs,
         chapters = chapters,
         transcriptUrl = transcriptUrl,
-        transcriptType = transcriptType
+        transcriptType = transcriptType,
+        season = season,
+        episodeNumber = episodeNumber,
+        episodeType = episodeType,
+        persons = persons
     )
 
     /** Returns the number of genuinely new rows (conflicts are ignored). */
@@ -1467,6 +1598,10 @@ class PodcastRepository(
                     imageUrl = entity.imageUrl,
                     durationMs = entity.durationMs,
                     chapters = entity.chapters
+                )
+                dao.updateEpisodeExtras(
+                    podcastId, entity.guid, entity.season, entity.episodeNumber,
+                    entity.episodeType, entity.persons
                 )
                 continue
             }

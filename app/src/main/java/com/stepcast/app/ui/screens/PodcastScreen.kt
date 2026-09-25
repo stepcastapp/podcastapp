@@ -238,6 +238,28 @@ fun PodcastScreen(
                                 modifier = Modifier.padding(top = 2.dp)
                             )
                         }
+                        // Podcasting 2.0 <podcast:funding>: the show's own
+                        // "support us" link, opened in the browser
+                        podcast?.fundingUrl?.let { url ->
+                            Text(
+                                podcast?.fundingLabel ?: stringResource(R.string.support_the_show),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                                    .clickable {
+                                        runCatching {
+                                            context.startActivity(
+                                                android.content.Intent(
+                                                    android.content.Intent.ACTION_VIEW,
+                                                    android.net.Uri.parse(url)
+                                                )
+                                            )
+                                        }
+                                    }
+                            )
+                        }
                     }
                     IconButton(onClick = {
                         scope.launch {

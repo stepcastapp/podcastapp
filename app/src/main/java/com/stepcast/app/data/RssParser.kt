@@ -13,7 +13,10 @@ data class ParsedFeed(
     val author: String,
     val episodes: List<ParsedEpisode>,
     /** <itunes:new-feed-url>: the publisher says the feed now lives here. */
-    val newFeedUrl: String? = null
+    val newFeedUrl: String? = null,
+    /** Podcasting 2.0 <podcast:funding url="…">label</podcast:funding>. */
+    val fundingUrl: String? = null,
+    val fundingLabel: String? = null
 )
 
 data class ParsedEpisode(
@@ -28,7 +31,13 @@ data class ParsedEpisode(
     val chapters: String? = null,
     /** Podcasting 2.0 <podcast:transcript>; best-supported format wins. */
     val transcriptUrl: String? = null,
-    val transcriptType: String? = null
+    val transcriptType: String? = null,
+    val season: Int? = null,
+    val episodeNumber: Int? = null,
+    /** "full" / "trailer" / "bonus" (itunes:episodeType); null = not stated. */
+    val episodeType: String? = null,
+    /** <podcast:person> names, " · "-joined. */
+    val persons: String? = null
 )
 
 /**
@@ -124,6 +133,8 @@ object RssParser {
         var channelImage: String? = null
         var channelAuthor = ""
         var channelNewFeedUrl: String? = null
+        var channelFundingUrl: String? = null
+        var channelFundingLabel: String? = null
         val episodes = mutableListOf<ParsedEpisode>()
 
         var inItem = false
@@ -141,6 +152,10 @@ object RssParser {
         var itemChaptersUrl: String? = null
         var itemTranscriptUrl: String? = null
         var itemTranscriptType: String? = null
+        var itemSeason: Int? = null
+        var itemEpisodeNumber: Int? = null
+        var itemEpisodeType: String? = null
+        val itemPersons = mutableListOf<String>()
 
         var event = parser.eventType
         try {
@@ -157,6 +172,17 @@ object RssParser {
                             "description" -> if (itemDescription.isEmpty()) itemDescription = parser.nextTextSafe()
                             "itunes:summary" -> if (itemDescription.isEmpty()) itemDescription = parser.nextTextSafe()
                             "content:encoded" -> if (itemContentEncoded.isEmpty()) itemContentEncoded = parser.nextTextSafe()
+                            // itunes:* wins; podcast:* only fills a gap
+                            "itunes:season" -> itemSeason = parseNumber(parser.nextTextSafe()) ?: itemSeason
+                            "podcast:season" -> if (itemSeason == null) itemSeason = parseNumber(parser.nextTextSafe())
+                            "itunes:episode" -> itemEpisodeNumber = parseNumber(parser.nextTextSafe()) ?: itemEpisodeNumber
+                            "podcast:episode" -> if (itemEpisodeNumber == null) itemEpisodeNumber = parseNumber(parser.nextTextSafe())
+                            "itunes:episodetype" -> itemEpisodeType =
+                                parser.nextTextSafe().lowercase(Locale.ROOT)
+                                    .takeIf { it in setOf("full", "trailer", "bonus") }
+                            "podcast:person" -> parser.nextTextSafe()
+                                .takeIf { it.isNotBlank() && it !in itemPersons }
+                                ?.let { itemPersons += it }
                             "pubdate" -> itemPubDate = parseDate(parser.nextTextSafe())
                             "itunes:duration" -> itemDuration = parseDuration(parser.nextTextSafe())
                             "itunes:image" -> itemImage = parser.getAttributeValue(null, "href") ?: itemImage
@@ -209,10 +235,19 @@ object RssParser {
                                 itemPubDate = 0L; itemDuration = 0L
                                 itemChapters.clear(); itemChaptersUrl = null
                                 itemTranscriptUrl = null; itemTranscriptType = null
+                                itemSeason = null; itemEpisodeNumber = null
+                                itemEpisodeType = null; itemPersons.clear()
                             }
                             "title" -> if (channelTitle.isEmpty()) channelTitle = parser.nextTextSafe()
                             "description" -> if (channelDescription.isEmpty()) channelDescription = parser.nextTextSafe()
                             "itunes:author" -> if (channelAuthor.isEmpty()) channelAuthor = parser.nextTextSafe()
+                            "podcast:funding" -> if (channelFundingUrl == null) {
+                                val url = parser.getAttributeValue(null, "url")
+                                if (url != null && url.startsWith("http")) {
+                                    channelFundingUrl = url
+                                    channelFundingLabel = parser.nextTextSafe().takeIf { it.isNotBlank() }
+                                }
+                            }
                             "itunes:new-feed-url" -> channelNewFeedUrl =
                                 parser.nextTextSafe().takeIf { it.startsWith("http") }
                             "itunes:image" -> channelImage = parser.getAttributeValue(null, "href") ?: channelImage
@@ -240,7 +275,12 @@ object RssParser {
                                     else -> null
                                 },
                                 transcriptUrl = itemTranscriptUrl,
-                                transcriptType = itemTranscriptType
+                                transcriptType = itemTranscriptType,
+                                season = itemSeason,
+                                episodeNumber = itemEpisodeNumber,
+                                episodeType = itemEpisodeType,
+                                persons = itemPersons.takeIf { it.isNotEmpty() }
+                                    ?.joinToString(" · ")
                             )
                         }
                     }
@@ -263,7 +303,9 @@ object RssParser {
             imageUrl = channelImage,
             author = channelAuthor,
             episodes = episodes,
-            newFeedUrl = channelNewFeedUrl
+            newFeedUrl = channelNewFeedUrl,
+            fundingUrl = channelFundingUrl,
+            fundingLabel = channelFundingLabel
         )
     }
 
@@ -324,6 +366,10 @@ object RssParser {
         if (pos.index < minOf(text.length, 10)) return null
         return date.time
     }
+
+    /** "3", " 12 ", "4.0" → Int; anything else → null. */
+    private fun parseNumber(text: String): Int? =
+        text.trim().toDoubleOrNull()?.takeIf { it >= 0 && it < 100_000 }?.toInt()
 
     /**
      * Accepts "HH:MM:SS", "MM:SS" or plain seconds — each part optionally
