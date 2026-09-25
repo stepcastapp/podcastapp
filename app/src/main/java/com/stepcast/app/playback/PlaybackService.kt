@@ -44,7 +44,11 @@ import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.core.graphics.drawable.toBitmap
 import java.io.File
+
+/** Longest edge of artwork handed to the system media surfaces and widgets. */
+private const val SYSTEM_ART_PX = 720
 
 /**
  * Hands MediaSession/notification artwork lookups to Coil's shared
@@ -77,11 +81,16 @@ private class CoilBitmapLoader(
                 // this bitmap crosses into the system UI process — a
                 // HARDWARE bitmap can't be parcelled across that boundary
                 .allowHardware(false)
+                // podcast art is typically 3000x3000: decoded at full size
+                // that's ~36 MB per load, for a card that shows a few
+                // hundred pixels (the framework scales it down anyway)
+                .size(SYSTEM_ART_PX)
                 .build()
             val result = coil.Coil.imageLoader(context).execute(request)
             val drawable = (result as? coil.request.SuccessResult)?.drawable
                 ?: throw java.io.IOException("Coil failed to load artwork: $uri")
-            (drawable as android.graphics.drawable.BitmapDrawable).bitmap
+            (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                ?: drawable.toBitmap()
         }
 }
 
@@ -194,6 +203,21 @@ class PlaybackService : MediaLibraryService() {
                 // indistinguishable from isPlaying alone, and retrying over a
                 // deliberate pause would be a bug, not a fix
                 if (!playWhenReady) lastPlayWhenReadyFalseReason = reason
+                if (!playWhenReady &&
+                    reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
+                    sleepAtEpisodeEnd
+                ) {
+                    // the end-of-episode sleep fired: one-shot, and the
+                    // finished episode counts as played NOW (the transition
+                    // that normally marks it only happens on the next play)
+                    sleepAtEpisodeEnd = false
+                    player.pauseAtEndOfMediaItems = false
+                    currentEpisodeId()?.takeIf { it > 0 }?.let { id ->
+                        serviceScope.launch(Dispatchers.IO) {
+                            app.repository.markPlayed(id, "sleep-eoe")
+                        }
+                    }
+                }
                 PlaybackJournal.log(
                     "pwr",
                     "value=$playWhenReady reason=${pwrReasonName(reason)} " +
@@ -808,6 +832,10 @@ class PlaybackService : MediaLibraryService() {
     /** minutes > 0 arms a countdown; endOfEpisode pauses after the current one; both zero/false cancels. */
     private fun setSleepTimer(minutes: Int, endOfEpisode: Boolean) {
         sleepAtEpisodeEnd = endOfEpisode
+        // ExoPlayer stops AT the item boundary itself. The old way paused
+        // from onEpisodeStarted — after several DB round trips, while the
+        // NEXT episode was already audibly playing at bedtime.
+        exoPlayer?.pauseAtEndOfMediaItems = endOfEpisode
         if (minutes > 0) {
             armSleepMillis(minutes * 60_000L)
         } else {
@@ -1080,35 +1108,19 @@ class PlaybackService : MediaLibraryService() {
             val prefs = getSharedPreferences(StepcastWidget.PREFS, MODE_PRIVATE)
             val artFile = File(cacheDir, "widget_art.png")
             val ok = uri != null && runCatching {
-                val input = if (uri.startsWith("content:") || uri.startsWith("file:")) {
-                    contentResolver.openInputStream(Uri.parse(uri))
-                } else {
-                    // bounded fetch: a slow art host must not pin this
-                    // coroutine forever, and a huge image must not be
-                    // buffered whole into memory
-                    (java.net.URL(uri).openConnection() as java.net.HttpURLConnection)
-                        .apply {
-                            connectTimeout = 10_000
-                            readTimeout = 15_000
-                        }
-                        .inputStream
-                } ?: return@runCatching false
-                val raw = input.use { stream ->
-                    val cap = 8 * 1024 * 1024
-                    val bytes = stream.readBytes()
-                    if (bytes.size > cap) return@runCatching false
-                    bytes
-                }
-                val bounds = android.graphics.BitmapFactory.Options()
-                    .apply { inJustDecodeBounds = true }
-                android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
-                var sample = 1
-                while (bounds.outWidth / (sample * 2) >= 512) sample *= 2
-                val opts = android.graphics.BitmapFactory.Options()
-                    .apply { inSampleSize = sample }
-                val bitmap =
-                    android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
-                        ?: return@runCatching false
+                // Coil: shared disk/memory cache (usually an instant hit —
+                // the player already showed this art), bounded decode size,
+                // and content:/file:/https alike. The old hand-rolled fetch
+                // buffered the WHOLE image before its size check.
+                val request = coil.request.ImageRequest.Builder(this@PlaybackService)
+                    .data(uri)
+                    .allowHardware(false)
+                    .size(WIDGET_ART_PX)
+                    .build()
+                val drawable = (coil.Coil.imageLoader(this@PlaybackService).execute(request)
+                    as? coil.request.SuccessResult)?.drawable ?: return@runCatching false
+                val bitmap = (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                    ?: drawable.toBitmap()
                 // write-then-rename: widgets decode this path concurrently,
                 // and a torn half-written file decodes to null (art flicker)
                 val tmp = File(cacheDir, "widget_art.tmp")
@@ -1131,6 +1143,7 @@ class PlaybackService : MediaLibraryService() {
         if (tickerJob?.isActive == true) return
         tickerJob = serviceScope.launch {
             var saveCountdown = SAVE_EVERY_TICKS
+            var statsCountdown = STATS_EVERY_TICKS
             var widgetCountdown = WIDGET_EVERY_TICKS
             while (isActive) {
                 delay(TICK_MS)
@@ -1140,6 +1153,9 @@ class PlaybackService : MediaLibraryService() {
                 if (--saveCountdown <= 0) {
                     saveCountdown = SAVE_EVERY_TICKS
                     persistPosition()
+                }
+                if (--statsCountdown <= 0) {
+                    statsCountdown = STATS_EVERY_TICKS
                     flushStats()
                 }
                 if (--widgetCountdown <= 0) {
@@ -1312,10 +1328,6 @@ class PlaybackService : MediaLibraryService() {
             previousId != null && previousId > 0 && previousId != episodeId
         ) {
             app.repository.markPlayed(previousId, "auto-adv")
-            if (sleepAtEpisodeEnd) {
-                sleepAtEpisodeEnd = false
-                mediaSession?.player?.pause()
-            }
         }
 
         app.repository.removeFromQueue(episodeId)
@@ -1553,6 +1565,9 @@ class PlaybackService : MediaLibraryService() {
 
     companion object {
         private const val TICK_MS = 1_000L
+        private const val WIDGET_ART_PX = 512
+        /** Listening stats rewrite a DataStore file — once a minute is plenty. */
+        private const val STATS_EVERY_TICKS = 60
         private const val SAVE_EVERY_TICKS = 5
         private const val WIDGET_EVERY_TICKS = 30
 

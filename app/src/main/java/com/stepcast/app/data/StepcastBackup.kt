@@ -36,7 +36,9 @@ object StepcastBackup {
         withContext(Dispatchers.IO) {
             val json = buildJson(repository)
             context.contentResolver.openOutputStream(uri)?.use {
-                it.write(json.toString(2).toByteArray())
+                // compact: a state-carrying backup of a big library is
+                // megabytes, and indentation roughly doubled it
+                it.write(json.toString().toByteArray())
             } ?: throw IllegalArgumentException("Couldn't open the destination file")
         }
 
@@ -158,18 +160,9 @@ object StepcastBackup {
         // unplayed and every half-listened one back at zero.
         root.put(
             "episodeState",
-            JSONArray().apply {
-                repository.exportEpisodeStates().forEach {
-                    put(EpisodeStateRestore.entryToJson(it))
-                }
-            }
+            EpisodeStateRestore.encodeEntries(repository.exportEpisodeStates())
         )
-        root.put(
-            "queue",
-            JSONArray().apply {
-                repository.exportQueueRefs().forEach { put(EpisodeStateRestore.queueToJson(it)) }
-            }
-        )
+        root.put("queue", EpisodeStateRestore.encodeQueue(repository.exportQueueRefs()))
         val saved = JSONArray()
         for ((podcast, episodes) in repository.savedEpisodeShows()) {
             for (ep in episodes) {
@@ -367,18 +360,8 @@ object StepcastBackup {
 
         // v3: listening state — staged, then applied as each feed's rows
         // exist (right now for shows already here, on first refresh for stubs)
-        val stateJson = json.optJSONArray("episodeState") ?: JSONArray()
-        val states = buildList {
-            for (i in 0 until stateJson.length()) {
-                stateJson.optJSONObject(i)?.let(EpisodeStateRestore::entryFromJson)?.let(::add)
-            }
-        }
-        val queueJson = json.optJSONArray("queue") ?: JSONArray()
-        val queueRefs = buildList {
-            for (i in 0 until queueJson.length()) {
-                queueJson.optJSONObject(i)?.let(EpisodeStateRestore::queueFromJson)?.let(::add)
-            }
-        }
+        val states = EpisodeStateRestore.decodeEntries(json.optJSONObject("episodeState"))
+        val queueRefs = EpisodeStateRestore.decodeQueue(json.optJSONArray("queue"))
         EpisodeStateRestore.stage(context, states, queueRefs)
         val knownFeeds = HashMap<String, Long>().apply {
             putAll(urlToId)

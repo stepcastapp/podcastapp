@@ -67,7 +67,14 @@ data class Podcast(
      * of the library: it never refreshes, never offers schedule rules,
      * and is not a SmartPlay scope. Subscribing later just flips this.
      */
-    val subscribed: Boolean = true
+    val subscribed: Boolean = true,
+    /**
+     * HTTP validators from the last successful feed fetch. Sent back as
+     * If-None-Match / If-Modified-Since so an unchanged feed answers 304
+     * and the refresh skips the download AND the parse.
+     */
+    val feedEtag: String? = null,
+    val feedLastModified: String? = null
 ) {
     companion object {
         const val FILTER_ALL = 0
@@ -87,7 +94,13 @@ data class Podcast(
     tableName = "episodes",
     indices = [
         Index(value = ["podcastId", "guid"], unique = true),
-        Index(value = ["podcastId", "pubDateMs"])
+        Index(value = ["podcastId", "pubDateMs"]),
+        // library-wide date windows (New inbox + its count, History-like
+        // scans) — without it every one was a full table scan, re-run on
+        // every position save while something played
+        Index(value = ["pubDateMs"]),
+        // the Downloads screen / activity queries
+        Index(value = ["downloadStatus"])
     ]
 )
 data class Episode(

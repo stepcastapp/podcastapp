@@ -11,7 +11,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.StateFlow
@@ -32,7 +35,20 @@ class PodcastRepository(
 ) {
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    val podcasts get() = db.podcastDao().observeAll()
+    /**
+     * ONE shared upstream per observed query. The UI used to call a getter
+     * that built a fresh Room Flow on every access — and collectAsState keys
+     * on the Flow instance, so every recomposition restarted the query.
+     * distinctUntilChanged matters just as much: every position save (each
+     * few seconds while playing) invalidates the episodes table and Room
+     * re-runs + re-emits every episodes query with identical rows, which
+     * then recomposed whole screens. WhileSubscribed(5s) stops the queries
+     * shortly after the last screen goes away (app backgrounded).
+     */
+    private fun <T> Flow<T>.shared(): SharedFlow<T> =
+        distinctUntilChanged().shareIn(repoScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
+
+    val podcasts = db.podcastDao().observeAll().shared()
 
     /**
      * "My library" — excludes shows that exist only to hold a one-off
@@ -40,7 +56,7 @@ class PodcastRepository(
      * subscription (the grid, refresh, schedule rules, SmartPlay scopes,
      * OPML export); use [podcasts] when resolving an episode's show.
      */
-    val subscribedPodcasts get() = db.podcastDao().observeSubscribed()
+    val subscribedPodcasts = db.podcastDao().observeSubscribed().shared()
 
     suspend fun subscribedPodcastList(): List<Podcast> =
         db.podcastDao().listSubscribed()
@@ -82,9 +98,9 @@ class PodcastRepository(
         db.episodeDao().getByAudioUrl(episode.audioUrl)?.id ?: 0L
     }
 
-    fun episodesFor(podcastId: Long) = db.episodeDao().observeForPodcast(podcastId)
+    fun episodesFor(podcastId: Long) = db.episodeDao().observeForPodcast(podcastId).distinctUntilChanged()
 
-    fun observePodcast(podcastId: Long) = db.podcastDao().observe(podcastId)
+    fun observePodcast(podcastId: Long) = db.podcastDao().observe(podcastId).distinctUntilChanged()
 
     suspend fun podcast(podcastId: Long) = db.podcastDao().get(podcastId)
 
@@ -148,8 +164,26 @@ class PodcastRepository(
         // as import backlog: suppress auto-download so the import doesn't
         // mass-download history — later refreshes still auto-download new ones.
         val isInitialImport = podcast.lastRefreshed == 0L
-        val feed = fetchFeed(podcast.feedUrl)
+        val fetched = fetchFeedConditional(
+            podcast.feedUrl, podcast.feedEtag, podcast.feedLastModified
+        )
+        if (fetched == null) {
+            // 304: nothing changed since the last full fetch — no download,
+            // no parse, no per-episode writes. The common case for a
+            // 300-feed library checked several times a day.
+            db.podcastDao().markRefreshedUnchanged(podcastId, System.currentTimeMillis())
+            // download rules still run — they depend on what was played and
+            // how old things got, not on whether the feed changed
+            if (!isInitialImport) autoManageDownloads(podcastId)
+            return@withContext 0
+        }
+        val moved = adoptMovedFeed(podcast, fetched)
+        val feed = moved.feed
         val newIds = insertEpisodesReturningIds(podcastId, feed)
+        // only once the rows are safely stored: validators saved before a
+        // failed insert would turn every later refresh into a 304 that
+        // never delivers those episodes
+        db.podcastDao().updateValidators(podcastId, moved.etag, moved.lastModified)
         // restored backup state waits for these rows to exist
         applyPendingRestore(podcastId, podcast.feedUrl)
         db.podcastDao().updateFromFeed(
@@ -254,16 +288,16 @@ class PodcastRepository(
         limit: Int
     ) = db.episodeDao().observeForPodcastPaged(
         podcastId, sortMode, if (oldestFirst) 1 else 0, limit
-    )
+    ).distinctUntilChanged()
 
     /** True total/unplayed counts, independent of the paged list. */
-    fun episodeCounts(podcastId: Long) = db.episodeDao().observeCounts(podcastId)
+    fun episodeCounts(podcastId: Long) = db.episodeDao().observeCounts(podcastId).distinctUntilChanged()
 
     /** Per-podcast downloaded/favorite/unplayed counts for Home badges. */
-    val podcastBadgeCounts get() = db.episodeDao().observeBadgeCounts()
+    val podcastBadgeCounts = db.episodeDao().observeBadgeCounts().shared()
 
     /** Each show's newest episode date, for the Library's "most recent" sort. */
-    val podcastLatestEpisodeDates get() = db.episodeDao().observeLatestEpisodeDates()
+    val podcastLatestEpisodeDates = db.episodeDao().observeLatestEpisodeDates().shared()
 
     suspend fun setFavorite(episodeId: Long, favorite: Boolean) =
         db.episodeDao().setFavorite(episodeId, favorite)
@@ -585,7 +619,7 @@ class PodcastRepository(
     // can be in ANY number of categories. Podcast.folder is kept synced to
     // the first membership as the legacy/primary value.
 
-    val podcastCategories get() = db.podcastCategoryDao().observeAll()
+    val podcastCategories = db.podcastCategoryDao().observeAll().shared()
 
     suspend fun categoriesFor(podcastId: Long): List<String> =
         db.podcastCategoryDao().categoriesFor(podcastId)
@@ -683,7 +717,7 @@ class PodcastRepository(
 
     // ---- category meta (manual order + refresh cadence) --------------------
 
-    val categoryMetas get() = db.categoryDao().observeAll()
+    val categoryMetas = db.categoryDao().observeAll().shared()
 
     private suspend fun ensureCategoryMeta(name: String) {
         if (db.categoryDao().get(name) == null) {
@@ -731,11 +765,11 @@ class PodcastRepository(
     suspend fun categoryMetaList(): List<CategoryMeta> = db.categoryDao().listAll()
 
     /** Merged, newest-first episode list across every podcast in the folder. */
-    fun episodesForCategory(category: String) = db.episodeDao().observeForFolder(category)
+    fun episodesForCategory(category: String) = db.episodeDao().observeForFolder(category).distinctUntilChanged()
 
     // ---- SmartPlays -------------------------------------------------------
 
-    val smartPlays get() = db.smartPlayDao().observeAll()
+    val smartPlays = db.smartPlayDao().observeAll().shared()
 
     /** Nudge a SmartPlay one slot up/down in the Up Next strip. */
     suspend fun moveSmartPlay(id: Long, up: Boolean) {
@@ -751,7 +785,7 @@ class PodcastRepository(
         reordered.forEachIndexed { i, sp -> db.smartPlayDao().setSort(sp.id, i) }
     }
 
-    fun observeSmartPlay(id: Long) = db.smartPlayDao().observe(id)
+    fun observeSmartPlay(id: Long) = db.smartPlayDao().observe(id).distinctUntilChanged()
 
     fun observeSmartPlayEntries(smartPlayId: Long) =
         db.smartPlayDao().observeEntries(smartPlayId)
@@ -847,10 +881,10 @@ class PodcastRepository(
 
     // ---- queue / up-next -------------------------------------------------
 
-    val queue get() = db.queueDao().observeQueue()
+    val queue = db.queueDao().observeQueue().shared()
 
     /** Running + failed downloads, for the download-activity dialog. */
-    val downloadActivity get() = db.episodeDao().observeDownloadActivity()
+    val downloadActivity = db.episodeDao().observeDownloadActivity().shared()
 
     suspend fun downloadingIds(): List<Long> = db.episodeDao().downloadingIds()
 
@@ -1101,7 +1135,7 @@ class PodcastRepository(
     }
 
     /** Recently finished episodes, newest first. */
-    val history get() = db.episodeDao().observeHistory()
+    val history = db.episodeDao().observeHistory().shared()
 
     // ---- downloads --------------------------------------------------------
 
@@ -1484,7 +1518,20 @@ class PodcastRepository(
 
     private fun inboxSinceMs() = System.currentTimeMillis() - INBOX_WINDOW_MS
 
-    fun inbox() = db.episodeDao().observeInbox(inboxSinceMs())
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val inboxFlow: SharedFlow<List<Episode>> = slidingInboxSince()
+        .flatMapLatest { since -> db.episodeDao().observeInbox(since) }
+        .shared()
+
+    fun inbox(): SharedFlow<List<Episode>> = inboxFlow
+
+    /** The inbox cutoff, re-emitted as the 14-day window slides forward. */
+    private fun slidingInboxSince() = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(inboxSinceMs())
+            kotlinx.coroutines.delay(INBOX_WINDOW_STEP_MS)
+        }
+    }
 
     /** ALL inbox ids, not just the 300 the list shows — Clear-all uses this. */
     suspend fun inboxAllIds(): List<Long> = db.episodeDao().inboxIds(inboxSinceMs())
@@ -1504,12 +1551,7 @@ class PodcastRepository(
     // with episodes long past 14 days (and disagree with the inbox list).
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val inboxCountFlow: StateFlow<Int> =
-        kotlinx.coroutines.flow.flow {
-            while (true) {
-                emit(inboxSinceMs())
-                kotlinx.coroutines.delay(INBOX_WINDOW_STEP_MS)
-            }
-        }
+        slidingInboxSince()
             .flatMapLatest { since -> db.episodeDao().observeInboxCount(since) }
             .distinctUntilChanged()
             .stateIn(repoScope, SharingStarted.Eagerly, 0)
@@ -1601,16 +1643,99 @@ class PodcastRepository(
     private fun normalizedFeedUrl(url: String): String =
         url.trim().substringAfter("://").removeSuffix("/").lowercase()
 
-    private fun fetchFeed(feedUrl: String): ParsedFeed {
+    private fun fetchFeed(feedUrl: String): ParsedFeed =
+        fetchFeedConditional(feedUrl, null, null)?.feed
+            ?: throw IOException("Unexpected 304 for $feedUrl")
+
+    /** A full fetch: the parsed feed plus what the HTTP layer told us about it. */
+    private class FetchedFeed(
+        val feed: ParsedFeed,
+        val etag: String?,
+        val lastModified: String?,
+        /** Set when EVERY redirect hop was permanent (301/308). */
+        val permanentlyMovedTo: String?
+    )
+
+    /** null = 304 Not Modified (only possible when validators were sent). */
+    private fun fetchFeedConditional(
+        feedUrl: String,
+        etag: String?,
+        lastModified: String?
+    ): FetchedFeed? {
         val request = Request.Builder()
             .url(feedUrl)
+            .apply {
+                etag?.let { header("If-None-Match", it) }
+                lastModified?.let { header("If-Modified-Since", it) }
+            }
             .build()
         http.newCall(request).execute().use { response ->
+            if (response.code == 304) return null
             if (!response.isSuccessful) throw IOException("HTTP ${response.code} for $feedUrl")
             val body = response.body ?: throw IOException("Empty body for $feedUrl")
-            return RssParser.parse(body.byteStream())
+            val feed = RssParser.parse(body.byteStream())
+            // walk the redirect chain: only an all-permanent chain means
+            // "the feed moved" — a temporary hop (tracking, CDN) must not
+            // rewrite the subscription
+            var hop = response.priorResponse
+            var allPermanent = hop != null
+            while (hop != null) {
+                if (hop.code != 301 && hop.code != 308) allPermanent = false
+                hop = hop.priorResponse
+            }
+            val finalUrl = response.request.url.toString()
+            return FetchedFeed(
+                feed = feed,
+                etag = response.header("ETag"),
+                lastModified = response.header("Last-Modified"),
+                permanentlyMovedTo = finalUrl.takeIf { allPermanent && it != feedUrl }
+            )
         }
     }
+
+    /**
+     * Publishers move feeds with a permanent redirect or <itunes:new-feed-url>.
+     * Following the redirect alone works until the OLD host is shut down —
+     * then the subscription dies. Adopt the new URL (never onto a URL
+     * another subscription already uses), and for new-feed-url fetch the new
+     * location first so a bad hint can't break a working feed.
+     */
+    private suspend fun adoptMovedFeed(podcast: Podcast, fetched: FetchedFeed): MovedFeedResult {
+        var feed = fetched.feed
+        var adoptedUrl = fetched.permanentlyMovedTo
+        var etag = fetched.etag
+        var lastModified = fetched.lastModified
+        val hinted = feed.newFeedUrl
+        if (hinted != null &&
+            normalizedFeedUrl(hinted) != normalizedFeedUrl(adoptedUrl ?: podcast.feedUrl)
+        ) {
+            runCatching { fetchFeedConditional(hinted, null, null) }.getOrNull()
+                ?.takeIf { it.feed.episodes.isNotEmpty() }
+                ?.let {
+                    feed = it.feed
+                    adoptedUrl = it.permanentlyMovedTo ?: hinted
+                    etag = it.etag
+                    lastModified = it.lastModified
+                }
+        }
+        val target = adoptedUrl
+        if (target != null) {
+            val owner = podcastIdForFeed(target)
+            if (owner == null || owner == podcast.id) {
+                db.podcastDao().adoptMovedFeedUrl(podcast.id, target)
+                PlaybackJournal.logSchedule(
+                    "feed-moved", "${podcast.title}: ${podcast.feedUrl} -> $target"
+                )
+            }
+        }
+        return MovedFeedResult(feed, etag, lastModified)
+    }
+
+    private class MovedFeedResult(
+        val feed: ParsedFeed,
+        val etag: String?,
+        val lastModified: String?
+    )
 }
 
 /** One podcast's downloaded-file footprint. */

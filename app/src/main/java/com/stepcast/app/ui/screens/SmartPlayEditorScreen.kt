@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,7 +34,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,9 +63,10 @@ fun SmartPlayEditorScreen(
     repository: PodcastRepository,
     onDone: () -> Unit
 ) {
-    val smartPlay by repository.observeSmartPlay(smartPlayId).collectAsState(initial = null)
-    val entries by repository.observeSmartPlayEntries(smartPlayId)
-        .collectAsState(initial = emptyList())
+    val smartPlay by remember(smartPlayId) { repository.observeSmartPlay(smartPlayId) }
+        .collectAsStateWithLifecycle(initialValue = null)
+    val entries by remember(smartPlayId) { repository.observeSmartPlayEntries(smartPlayId) }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
 
     // live "N match now" per rule — makes empty SmartPlays self-explanatory
     var matchCounts by androidx.compose.runtime.remember {
@@ -82,9 +83,9 @@ fun SmartPlayEditorScreen(
             .filter { matchCounts[it.id] == 0 }
             .associate { it.id to repository.explainSmartPlayEntry(it) }
     }
-    val podcasts by repository.subscribedPodcasts.collectAsState(initial = emptyList())
+    val podcasts by repository.subscribedPodcasts.collectAsStateWithLifecycle(initialValue = emptyList())
     val podcastsById = podcasts.associateBy { it.id }
-    val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
+    val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
     val categoryNames = categoryMetas.map { it.name }
     val scope = rememberCoroutineScope()
 

@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,7 +49,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,7 +89,7 @@ fun FullPlayerSheet(
     onOpenPodcast: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val progress by player.progress.collectAsState()
+    val progress by player.progress.collectAsStateWithLifecycle()
     val view = androidx.compose.ui.platform.LocalView.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var sleepDialogOpen by remember { mutableStateOf(false) }

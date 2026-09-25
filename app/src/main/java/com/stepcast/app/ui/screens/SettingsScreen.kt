@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -42,7 +43,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,7 +91,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
+    val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
     var reorderDialogOpen by remember { mutableStateOf(false) }
     var diagnosticsOpen by remember { mutableStateOf(false) }
     var bpImporting by remember { mutableStateOf(false) }

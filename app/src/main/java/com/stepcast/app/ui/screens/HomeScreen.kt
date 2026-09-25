@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -47,7 +48,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -83,12 +83,12 @@ fun HomeScreen(
     onOpenSearch: () -> Unit,
     onOpenInbox: () -> Unit
 ) {
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
-    val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
-    val memberships by repository.podcastCategories.collectAsState(initial = emptyList())
-    val badgeCounts by repository.podcastBadgeCounts.collectAsState(initial = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
+    val memberships by repository.podcastCategories.collectAsStateWithLifecycle(initialValue = emptyList())
+    val badgeCounts by repository.podcastBadgeCounts.collectAsStateWithLifecycle(initialValue = emptyList())
     val badgeByPodcast = remember(badgeCounts) { badgeCounts.associateBy { it.podcastId } }
-    val latestEpisodeDates by repository.podcastLatestEpisodeDates.collectAsState(initial = emptyList())
+    val latestEpisodeDates by repository.podcastLatestEpisodeDates.collectAsStateWithLifecycle(initialValue = emptyList())
     val latestEpisodeByPodcast = remember(latestEpisodeDates) {
         latestEpisodeDates.associate { it.podcastId to it.latestMs }
     }
@@ -222,7 +222,7 @@ fun HomeScreen(
             // runs — which used to make this card arrive after everything
             // else on the screen and shift the category list right as a
             // tap landed.
-            val inboxCount by repository.inboxCount().collectAsState()
+            val inboxCount by repository.inboxCount().collectAsStateWithLifecycle()
             if (inboxCount > 0) {
                 // this card slots in ABOVE the grid, pushing everything
                 // below it down the instant the count arrives — a tap

@@ -25,9 +25,18 @@ the app does not compile locally. The loop:
    every new R.string/R.plurals reference exists in strings.xml.
 2. Push. Every push to main or claude/** runs
    `.github/workflows/stepcast-build.yml` (assembleDebug + unit tests + R8
-   assembleRelease) and updates the rolling `stepcast-latest` release.
-3. Green/red without auth:
+   assembleRelease). Only pushes to **main** update the rolling
+   `stepcast-latest` release (the daily-driver sideload); branch builds
+   upload workflow artifacts only.
+3. Green/red without auth (main only):
    `curl -sS https://github.com/stepcastapp/podcastapp/releases/tag/stepcast-latest | grep -oE "Current: [0-9a-f]{7}"`
+   — for a branch, use the GitHub MCP `actions_list` tool.
+   If the environment CAN reach dl.google.com, a local build works too:
+   install the SDK (platform 36, build-tools 35) under /opt/android-sdk,
+   write `sdk.dir` to local.properties (gitignored) and run `gradle
+   assembleDebug testDebugUnitTest`. Maven Central may answer 429 — a
+   Gradle init script in ~/.gradle/init.d pointing at
+   `https://maven-central.storage-download.googleapis.com/maven2/` fixes it.
 4. Failure details via the GitHub MCP actions tools (`actions_list`,
    `get_job_logs`; grep `e: file` for Kotlin errors). A CI round trip is
    ~9 minutes — pre-check everything cheap.

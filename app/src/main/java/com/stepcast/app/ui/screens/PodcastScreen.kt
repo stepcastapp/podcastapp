@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,7 +44,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -78,7 +78,8 @@ fun PodcastScreen(
     playerState: PlayerUiState,
     onUnsubscribed: () -> Unit
 ) {
-    val podcast by repository.observePodcast(podcastId).collectAsState(initial = null)
+    val podcast by remember(podcastId) { repository.observePodcast(podcastId) }
+        .collectAsStateWithLifecycle(initialValue = null)
     val scope = rememberCoroutineScope()
     // paged: a 2000-episode feed must not inflate 2000 rows at once
     var episodeLimit by rememberSaveable { mutableStateOf(100) }
@@ -86,12 +87,12 @@ fun PodcastScreen(
     val sortMode = podcast?.episodeSortMode ?: Podcast.SORT_DATE
     val episodes by remember(podcastId, episodeLimit, sortMode, oldestFirst) {
         repository.episodesForPaged(podcastId, sortMode, oldestFirst, episodeLimit)
-    }.collectAsState(initial = emptyList())
-    val queueIds by repository.queue.collectAsState(initial = emptyList())
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val queueIds by repository.queue.collectAsStateWithLifecycle(initialValue = emptyList())
     val queuedIds = queueIds.mapTo(HashSet()) { it.id }
     // header counts come straight from the DB — episodes above is paged
     val counts by remember(podcastId) { repository.episodeCounts(podcastId) }
-        .collectAsState(initial = null)
+        .collectAsStateWithLifecycle(initialValue = null)
     // seeded from the show's remembered choice on first load only — a
     // stray recomposition of the podcast row (e.g. a refresh finishing)
     // must not silently reset the chip the user picked this visit
@@ -111,12 +112,12 @@ fun PodcastScreen(
         Podcast.FILTER_FAVORITE -> episodes.filter { it.favorite }
         else -> episodes
     }
-    val allPodcasts by repository.podcasts.collectAsState(initial = emptyList())
-    val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
+    val allPodcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
     val categories = categoryMetas.map { it.name }
         .sortedWith(String.CASE_INSENSITIVE_ORDER)
     val allMemberships by repository.podcastCategories
-        .collectAsState(initial = emptyList())
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     val myCategories = allMemberships
         .filter { it.podcastId == podcastId }
         .map { it.category }

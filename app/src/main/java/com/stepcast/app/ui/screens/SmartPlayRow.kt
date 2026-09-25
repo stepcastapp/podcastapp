@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,7 +30,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,8 +62,8 @@ fun SmartPlayRow(
     onEdit: (Long) -> Unit,
     snackbar: androidx.compose.material3.SnackbarHostState
 ) {
-    val smartPlays by repository.smartPlays.collectAsState(initial = emptyList())
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
+    val smartPlays by repository.smartPlays.collectAsStateWithLifecycle(initialValue = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 

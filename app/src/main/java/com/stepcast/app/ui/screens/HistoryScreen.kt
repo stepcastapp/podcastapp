@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +22,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -54,8 +54,8 @@ fun HistoryScreen(
     repository: PodcastRepository,
     player: PlayerConnection
 ) {
-    val history by repository.history.collectAsState(initial = emptyList())
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
+    val history by repository.history.collectAsStateWithLifecycle(initialValue = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
     val byId = podcasts.associateBy { it.id }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current

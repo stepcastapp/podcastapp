@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -47,7 +48,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,7 +79,7 @@ import com.stepcast.app.ui.progressBorder
  */
 @Composable
 fun rememberLiveFraction(player: PlayerConnection): Float {
-    val progress by player.progress.collectAsState()
+    val progress by player.progress.collectAsStateWithLifecycle()
     return progress.fraction
 }
 

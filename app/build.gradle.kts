@@ -72,11 +72,34 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all { test ->
+            // optional mirror for Robolectric's runtime jars (-ProbolectricRepo=…)
+            // when Maven Central rate-limits a local/agent environment
+            (project.findProperty("robolectricRepo") as String?)?.let {
+                test.systemProperty("robolectric.dependency.repo.url", it)
+            }
+        }
+    }
+    // migration tests read the exported schema JSONs as assets. Robolectric
+    // unit tests only see the variant's merged assets (test-source assets
+    // aren't merged), so they ride in the DEBUG variant — a few KB of JSON
+    // that never reaches the release APK.
+    sourceSets {
+        getByName("debug").assets.srcDir("$projectDir/schemas")
+    }
     buildFeatures {
         compose = true
         // BuildConfig.DEBUG gates the destructive-migration fallback
         buildConfig = true
     }
+}
+
+// Room writes each schema version's JSON here (committed) — the input the
+// migration tests validate real upgrades against
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -85,6 +108,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -103,5 +127,19 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.glance.appwidget)
+    // applies the libraries' (Compose, Media3…) baseline profiles on
+    // sideloaded installs too, not just Play's cloud profiles — faster cold
+    // start and less jank on first runs
+    implementation(libs.androidx.profileinstaller)
+    // drag-to-reorder for the queue (see QueueScreen)
+    implementation(libs.reorderable)
     testImplementation(libs.junit)
+    // JVM Android runtime for tests that need real SQLite / XmlPullParser:
+    // migration tests, the RSS parser, the refresh merge logic
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.androidx.work.testing)
 }

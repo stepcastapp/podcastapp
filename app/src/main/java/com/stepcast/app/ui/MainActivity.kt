@@ -1,5 +1,6 @@
 package com.stepcast.app.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.os.Bundle
 import androidx.compose.ui.res.stringResource
 import com.stepcast.app.R
@@ -23,7 +24,6 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -180,8 +180,8 @@ fun StepcastApp(
 ) {
     val navController = rememberNavController()
     val app = LocalContext.current.applicationContext as StepcastApplication
-    val playerState by player.state.collectAsState()
-    val queue by app.repository.queue.collectAsState(initial = emptyList())
+    val playerState by player.state.collectAsStateWithLifecycle()
+    val queue by app.repository.queue.collectAsStateWithLifecycle(initialValue = emptyList())
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     var playerExpanded by androidx.compose.runtime.saveable.rememberSaveable {

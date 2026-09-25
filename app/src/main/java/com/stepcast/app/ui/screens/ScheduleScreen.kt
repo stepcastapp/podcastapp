@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,7 +27,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,7 +71,7 @@ fun ScheduleScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val podcasts by repository.subscribedPodcasts.collectAsState(initial = emptyList())
+    val podcasts by repository.subscribedPodcasts.collectAsStateWithLifecycle(initialValue = emptyList())
     val sortedPods = remember(podcasts) { podcasts.sortedBy { it.title.lowercase() } }
 
     val checkpointTimes = AppSettings.checkpointTimes

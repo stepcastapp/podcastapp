@@ -57,7 +57,12 @@ jobs:
 
       # Artifacts require a browser login to download; a release asset is a
       # plain public link, so the phone can grab the APK directly.
+      # MAIN ONLY: the rolling release is the daily-driver sideload, and an
+      # unmerged experiment pushed to a claude/** branch used to replace it
+      # (the queue-drag rewrite that made things worse did exactly that).
+      # Branch builds still compile, test and upload artifacts above.
       - name: Publish rolling stepcast-latest release
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

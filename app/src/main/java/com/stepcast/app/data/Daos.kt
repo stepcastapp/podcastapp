@@ -83,6 +83,26 @@ interface PodcastDao {
     )
     suspend fun updateLocalScan(id: Long, lastRefreshed: Long, fallbackArt: String?)
 
+    /** HTTP validators from the last full fetch (see [Podcast.feedEtag]). */
+    @Query(
+        "UPDATE podcasts SET feedEtag = :etag, feedLastModified = :lastModified WHERE id = :id"
+    )
+    suspend fun updateValidators(id: Long, etag: String?, lastModified: String?)
+
+    /** A 304 Not Modified is a successful refresh with nothing to parse. */
+    @Query(
+        "UPDATE podcasts SET lastRefreshed = :lastRefreshed, consecutiveFailures = 0 " +
+            "WHERE id = :id"
+    )
+    suspend fun markRefreshedUnchanged(id: Long, lastRefreshed: Long)
+
+    /** The publisher moved the feed (301/308 or itunes:new-feed-url). */
+    @Query(
+        "UPDATE podcasts SET feedUrl = :feedUrl, feedEtag = NULL, feedLastModified = NULL " +
+            "WHERE id = :id"
+    )
+    suspend fun adoptMovedFeedUrl(id: Long, feedUrl: String)
+
     /** Dead-feed repair: repoint + adopt the new feed's metadata, narrowly. */
     @Query(
         "UPDATE podcasts SET feedUrl = :feedUrl, " +
@@ -90,7 +110,8 @@ interface PodcastDao {
             "description = CASE WHEN :description = '' THEN description ELSE :description END, " +
             "imageUrl = COALESCE(:imageUrl, imageUrl), " +
             "author = CASE WHEN :author = '' THEN author ELSE :author END, " +
-            "lastRefreshed = :lastRefreshed, consecutiveFailures = 0 " +
+            "lastRefreshed = :lastRefreshed, consecutiveFailures = 0, " +
+            "feedEtag = NULL, feedLastModified = NULL " +
             "WHERE id = :id"
     )
     suspend fun repoint(

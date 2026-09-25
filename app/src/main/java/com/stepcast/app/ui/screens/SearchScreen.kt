@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,7 +39,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -109,8 +109,8 @@ fun SearchScreen(
 
     var libShows by remember { mutableStateOf<List<Podcast>>(emptyList()) }
     var libEpisodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
-    val queued by repository.queue.collectAsState(initial = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val queued by repository.queue.collectAsStateWithLifecycle(initialValue = emptyList())
     val byId = podcasts.associateBy { it.id }
     val queuedIds = queued.map { it.id }.toSet()
 
