@@ -578,4 +578,14 @@
         <item quantity="one">This will set %1$d podcast to auto-keep %2$d and max age %3$d days, overriding any individual settings.</item>
         <item quantity="other">This will set %1$d podcasts to auto-keep %2$d and max age %3$d days, overriding any individual settings.</item>
     </plurals>
+    <plurals name="notif_new_episodes">
+        <item quantity="one">%d new episode</item>
+        <item quantity="other">%d new episodes</item>
+    </plurals>
+    <string name="notif_channel_new_episodes">New episodes</string>
+    <string name="allow_external_automation">Allow control from other apps</string>
+    <string name="allow_external_automation_hint">Tasker, Routines and adb can play, pause, skip, mark played and refresh via broadcast commands</string>
+    <string name="restore_previous_phone">Restore library from your previous phone</string>
+    <string name="restore_previous_phone_done">Restored %1$d shows — episodes and listening progress fill in as feeds refresh</string>
+    <string name="restore_previous_phone_failed">Couldn\'t restore the library snapshot</string>
 </resources>

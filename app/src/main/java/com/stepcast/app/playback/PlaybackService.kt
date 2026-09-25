@@ -491,6 +491,23 @@ class PlaybackService : MediaLibraryService() {
                     .setMediaButtonPreferences(mediaNotificationButtons())
                     .build()
             }
+            // Browsing the library and Stepcast's custom commands (Done =
+            // mark played + delete) are for the system, Android Auto, this
+            // app, and — when the user opted in — automation apps. Anything
+            // else connecting gets ordinary transport control only.
+            val privileged = controller.packageName == packageName ||
+                controller.isTrusted ||
+                session.isAutoCompanionController(controller) ||
+                session.isAutomotiveController(controller) ||
+                AppSettings.allowExternalAutomation
+            if (!privileged) {
+                PlaybackJournal.log("connect", "limited controller=${controller.packageName}")
+                return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                    .setAvailableSessionCommands(
+                        MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                    )
+                    .build()
+            }
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(sessionCommands)
                 .build()

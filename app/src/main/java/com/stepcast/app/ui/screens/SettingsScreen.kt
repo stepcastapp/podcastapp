@@ -538,7 +538,7 @@ fun SettingsScreen(
                 context.sendBroadcast(
                     android.content.Intent(
                         context,
-                        com.stepcast.app.playback.CommandReceiver::class.java
+                        com.stepcast.app.playback.InternalCommandReceiver::class.java
                     ).setAction(
                         com.stepcast.app.playback.CommandReceiver
                             .ACTION_REFRESH_NOTIF_BUTTONS
@@ -636,6 +636,12 @@ fun SettingsScreen(
                 onToggle = { AppSettings.setNotifyOnlyAtCheckpoints(context, it) }
             )
         }
+        SwitchSetting(
+            label = stringResource(R.string.allow_external_automation),
+            hint = stringResource(R.string.allow_external_automation_hint),
+            checked = AppSettings.allowExternalAutomation,
+            onToggle = { AppSettings.setAllowExternalAutomation(context, it) }
+        )
         ActionRow(
             label = stringResource(R.string.storage_2),
             hint = stringResource(R.string.downloaded_episodes_by_podcast_with_one_ta),

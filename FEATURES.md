@@ -186,6 +186,12 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   that leaves the global setting alone. When Wi-Fi-only is on, an episode's
   overflow menu also offers a per-episode **"Download now (mobile data)"**
   action for a single download or retry.
+- **Resumable downloads**: an interrupted download (lost signal, the OS
+  stopping a long background download) resumes where it stopped instead
+  of starting over (`Range` + `If-Range`, so a changed file restarts
+  cleanly); attempts that make progress keep retrying. Tapped downloads
+  run as expedited work; a download that won't fit (keeping 200 MB free)
+  fails up front.
 - Per-row and bulk retry / dismiss / cancel; **auto-retry gives up after
   3 failed attempts** so dead enclosures stop reappearing; manual retry
   always allowed; orphaned in-flight downloads recover on app start.
@@ -260,7 +266,10 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   download rules.
 - **New-episode notifications** (toggle) from background refresh, with an
   **"only around checkpoints"** option (default on) that batches alerts
-  near the Fresh-by times instead of pinging after every check.
+  near the Fresh-by times instead of pinging after every check — episodes
+  found by off-checkpoint checks are held and announced at the next
+  checkpoint (played or dismissed ones drop out). Tapping the alert opens
+  the New-episodes inbox.
 - Per-show: episode list cap, oldest-first (serials), auto-queue new
   episodes.
 - Bounded refresh/download concurrency, sized for 300+ feed libraries;
@@ -316,7 +325,8 @@ still prompt for unlock (they need more than a media key can say).
 ## Automation & integrations
 
 Broadcast commands under `com.stepcast.app.command.*` (full table +
-Tasker/adb recipes in [AUTOMATION.md](AUTOMATION.md)):
+Tasker/adb recipes in [AUTOMATION.md](AUTOMATION.md)) — opt-in via
+Settings → **Allow control from other apps** (off on fresh installs):
 PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, SEEK_BACK, SEEK_FORWARD, DONE,
 REFRESH, REFRESH_CATEGORY, START_SMART_PLAY (actually starts playback;
 a Station stays active and keeps refilling). Plus share-target and
@@ -325,7 +335,16 @@ podcast-scheme URL handling into Discover.
 ## Data: backup, restore, import, export
 
 - **Stepcast JSON backup/restore**: subscriptions, categories (multi-
-  membership), SmartPlays, settings; restore merges and kicks a refresh.
+  membership), SmartPlays, settings, and **listening state** — played
+  flags, positions, favorites, History dates, Up Next order, saved one-off
+  episodes, listening stats (format v3). Restore merges and kicks a
+  refresh; the listening state is applied as each feed's episodes arrive
+  (played wins, a local in-progress position is kept, favorites union).
+- **New phone, one tap**: a copy of the library rides along in Google's
+  own Auto Backup / device transfer (refreshed daily). An empty Library on
+  the new phone offers **Restore library from your previous phone**.
+  Device-bound settings (active station, backup-folder grant) are dropped
+  when settings arrive from the cloud onto a fresh install.
 - **Weekly auto-backup** to a chosen folder (SAF) with "back up now".
 - **OPML import** and **nested OPML export** (a feed appears under every
   category it belongs to).

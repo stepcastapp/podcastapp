@@ -28,9 +28,13 @@ class AutoBackupWorker(
     override suspend fun doWork(): Result {
         if (AppSettings.autoBackupFolder == null) return Result.success()
         val app = applicationContext as StepcastApplication
-        return when (backupNow(applicationContext, app.repository)) {
-            null -> Result.success()
-            else -> Result.retry()
+        val error = backupNow(applicationContext, app.repository) ?: return Result.success()
+        // a missing folder or revoked grant won't fix itself by retrying —
+        // the weekly periodic run tries again, and Settings shows the age
+        return if (error in PERMANENT_ERRORS || runAttemptCount >= 3) {
+            Result.failure()
+        } else {
+            Result.retry()
         }
     }
 
@@ -39,6 +43,9 @@ class AutoBackupWorker(
         private const val TMP_NAME = "stepcast-auto-backup.json.tmp"
         private const val PREV_NAME = "stepcast-auto-backup.prev.json"
         private const val WORK_NAME = "auto-backup"
+        private const val NO_FOLDER = "No backup folder configured"
+        private const val FOLDER_GONE = "Backup folder is gone or permission was revoked"
+        private val PERMANENT_ERRORS = setOf(NO_FOLDER, FOLDER_GONE)
         private const val WORK_NAME_NOW = "auto-backup-now"
 
         /**
@@ -51,11 +58,11 @@ class AutoBackupWorker(
             repository: com.stepcast.app.data.PodcastRepository
         ): String? {
             val folderUri = AppSettings.autoBackupFolder
-                ?: return "No backup folder configured"
+                ?: return NO_FOLDER
             return runCatching {
                 val tree = DocumentFile.fromTreeUri(context, Uri.parse(folderUri))
                     ?.takeIf { it.canWrite() }
-                    ?: return "Backup folder is gone or permission was revoked"
+                    ?: return FOLDER_GONE
                 // write into a temp first: a failure mid-export must not
                 // destroy the existing backup (the old delete-then-create
                 // left NOTHING behind when the export died)

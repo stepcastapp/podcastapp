@@ -12,6 +12,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Semaphore
@@ -26,10 +28,7 @@ import java.util.concurrent.TimeUnit
 class PodcastRepository(
     private val db: StepcastDatabase,
     private val appContext: Context,
-    private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val http: OkHttpClient = Http.api
 ) {
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -129,6 +128,7 @@ class PodcastRepository(
             )
         )
         insertEpisodes(id, feed)
+        applyPendingRestore(id, feedUrl)
         if (suppressBacklogAutoDownload) {
             db.episodeDao().setAutoDownloadEligibleForPodcast(id, false)
         } else {
@@ -150,6 +150,8 @@ class PodcastRepository(
         val isInitialImport = podcast.lastRefreshed == 0L
         val feed = fetchFeed(podcast.feedUrl)
         val newIds = insertEpisodesReturningIds(podcastId, feed)
+        // restored backup state waits for these rows to exist
+        applyPendingRestore(podcastId, podcast.feedUrl)
         db.podcastDao().updateFromFeed(
             podcastId,
             // the parser's placeholder must never replace a real title
@@ -212,7 +214,7 @@ class PodcastRepository(
                 .filter { it.downloadAttempts < Episode.MAX_AUTO_DOWNLOAD_ATTEMPTS }
                 .take(podcast.keepDownloads)
                 .filter { it.downloadStatus == Episode.DOWNLOAD_NONE }
-                .forEach { DownloadWorker.start(appContext, it.id) }
+                .forEach { DownloadWorker.start(appContext, it.id, userInitiated = false) }
             episodes.filter { it.isDownloaded && it.played }
                 .forEach { deleteDownload(it.id) }
         }
@@ -1147,7 +1149,6 @@ class PodcastRepository(
         try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Stepcast/0.5")
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
@@ -1240,6 +1241,113 @@ class PodcastRepository(
         // otherwise poisons the near-end resume guard forever
         if (durationMs > 0) db.episodeDao().correctDuration(episodeId, durationMs)
         PlaybackJournal.log("pos", "$source ep=$episodeId pos=$positionMs dur=$durationMs")
+    }
+
+    // ---- backup of listening state ---------------------------------------
+
+    /** Every episode carrying played/position/favorite state, keyed by feed URL. */
+    suspend fun exportEpisodeStates(): List<EpisodeStateRestore.Entry> {
+        val feedById = db.podcastDao().listAll()
+            .filter { it.localFolderUri == null } // SAF grants don't transfer
+            .associate { it.id to it.feedUrl }
+        return db.episodeDao().listWithState().mapNotNull { row ->
+            val feed = feedById[row.podcastId] ?: return@mapNotNull null
+            EpisodeStateRestore.Entry(
+                feedUrl = feed,
+                guid = row.guid,
+                audioUrl = row.audioUrl,
+                played = row.played,
+                playedAtMs = row.playedAtMs,
+                positionMs = row.positionMs,
+                favorite = row.favorite
+            )
+        }
+    }
+
+    /** Up Next as portable references (feed + guid), in play order. */
+    suspend fun exportQueueRefs(): List<EpisodeStateRestore.QueueRef> {
+        val queue = db.queueDao().queueSnapshot()
+        val feedById = podcastsByIds(queue.map { it.podcastId })
+            .filter { it.localFolderUri == null }
+            .associate { it.id to it.feedUrl }
+        return queue.mapNotNull { ep ->
+            feedById[ep.podcastId]?.let {
+                EpisodeStateRestore.QueueRef(it, ep.guid, ep.audioUrl)
+            }
+        }
+    }
+
+    suspend fun resolveEpisodeId(podcastId: Long, guid: String, audioUrl: String): Long? =
+        guid.takeIf { it.isNotEmpty() }?.let { db.episodeDao().idByGuid(podcastId, it) }
+            ?: audioUrl.takeIf { it.isNotEmpty() }
+                ?.let { db.episodeDao().idByAudioUrl(podcastId, it) }
+
+    /**
+     * Merges restored listening state into existing rows: played wins, the
+     * later played-at wins, a local in-progress position is kept, favorites
+     * union. One transaction = one list re-render.
+     */
+    suspend fun applyEpisodeStates(podcastId: Long, entries: List<EpisodeStateRestore.Entry>) {
+        if (entries.isEmpty()) return
+        db.withTransaction {
+            for (e in entries) {
+                val id = resolveEpisodeId(podcastId, e.guid, e.audioUrl) ?: continue
+                val local = db.episodeDao().get(id) ?: continue
+                val played = local.played || e.played
+                val position = when {
+                    played -> 0L
+                    local.positionMs > 0 -> local.positionMs
+                    else -> e.positionMs.coerceAtLeast(0)
+                }
+                db.episodeDao().restoreState(
+                    id,
+                    played = played,
+                    playedAtMs = maxOf(local.playedAtMs, e.playedAtMs),
+                    positionMs = position,
+                    favorite = local.favorite || e.favorite
+                )
+                // restored history must not resurface in "New"
+                if (played) db.episodeDao().setInboxDismissed(listOf(id), true)
+            }
+        }
+    }
+
+    /** A restored Up Next: replaces an empty queue, otherwise appends what's missing. */
+    suspend fun restoreQueue(ids: List<Long>) {
+        val current = db.queueDao().queueSnapshot().map { it.id }.toHashSet()
+        if (current.isEmpty()) {
+            replaceQueue(ids)
+        } else {
+            appendToQueueLast(ids.filter { it !in current })
+        }
+    }
+
+    /** Unsubscribed shows that exist only to hold saved one-off episodes. */
+    suspend fun savedEpisodeShows(): List<Pair<Podcast, List<Episode>>> =
+        db.podcastDao().listAll()
+            .filter { !it.subscribed && it.localFolderUri == null }
+            .map { it to db.episodeDao().listForPodcast(it.id) }
+            .filter { it.second.isNotEmpty() }
+
+    /** Per-show listening totals for the backup, keyed by feed URL. */
+    suspend fun exportListenStats(): List<Triple<String, Long, Long>> {
+        val feedById = db.podcastDao().listAll().associate { it.id to it.feedUrl }
+        return db.listenStatDao().listAll().mapNotNull { stat ->
+            feedById[stat.podcastId]?.let { Triple(it, stat.wallMs, stat.contentMs) }
+        }
+    }
+
+    /** Restore: raises (never adds) so restoring the same file twice can't double-count. */
+    suspend fun restoreListenStat(podcastId: Long, wallMs: Long, contentMs: Long) {
+        db.listenStatDao().insert(ListenStat(podcastId, 0, 0))
+        db.listenStatDao().raiseTo(podcastId, wallMs, contentMs)
+    }
+
+    /** Pending restored state for this feed, if a backup restore staged any. */
+    private suspend fun applyPendingRestore(podcastId: Long, feedUrl: String) {
+        runCatching {
+            EpisodeStateRestore.applyFor(appContext, this, podcastId, feedUrl)
+        }.onFailure { PlaybackJournal.log("restore-state", "failed pod=$podcastId: $it") }
     }
 
     /** "Finished" mark used by completion and done-and-delete paths. */
@@ -1391,11 +1499,27 @@ class PodcastRepository(
      * Eagerly collecting from app start means the value is normally
      * already resolved by the time any screen asks for it.
      */
+    // The window slides: the playback service keeps this process alive for
+    // days, and a cutoff computed once at startup let the count drift up
+    // with episodes long past 14 days (and disagree with the inbox list).
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val inboxCountFlow: StateFlow<Int> =
-        db.episodeDao().observeInboxCount(inboxSinceMs())
+        kotlinx.coroutines.flow.flow {
+            while (true) {
+                emit(inboxSinceMs())
+                kotlinx.coroutines.delay(INBOX_WINDOW_STEP_MS)
+            }
+        }
+            .flatMapLatest { since -> db.episodeDao().observeInboxCount(since) }
+            .distinctUntilChanged()
             .stateIn(repoScope, SharingStarted.Eagerly, 0)
 
     fun inboxCount(): StateFlow<Int> = inboxCountFlow
+
+    suspend fun notifyCandidates(afterId: Long): List<NotifyCandidate> =
+        db.episodeDao().notifyCandidates(afterId, inboxSinceMs())
+
+    suspend fun maxEpisodeId(): Long = db.episodeDao().maxId()
 
     suspend fun dismissFromInbox(ids: List<Long>) =
         db.episodeDao().setInboxDismissed(ids, true)
@@ -1410,7 +1534,6 @@ class PodcastRepository(
         withContext(Dispatchers.IO) {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Stepcast/0.5")
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code} for $url")
@@ -1481,7 +1604,6 @@ class PodcastRepository(
     private fun fetchFeed(feedUrl: String): ParsedFeed {
         val request = Request.Builder()
             .url(feedUrl)
-            .header("User-Agent", "Stepcast/0.5")
             .build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("HTTP ${response.code} for $feedUrl")
@@ -1503,3 +1625,6 @@ data class EpisodeStartSettings(
 
 /** How far back the New-episodes inbox reaches. */
 private const val INBOX_WINDOW_MS = 14L * 86_400_000
+
+/** How often the inbox count's sliding window moves forward. */
+private const val INBOX_WINDOW_STEP_MS = 15L * 60_000

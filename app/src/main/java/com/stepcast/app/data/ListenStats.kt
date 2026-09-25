@@ -68,6 +68,37 @@ object ListenStats {
         }
     }
 
+    /**
+     * Backup restore: each total rises to the backup's value, never adds —
+     * restoring the same file twice must not double the numbers. The
+     * "since" date moves EARLIER when the backup's history started first.
+     */
+    fun restoreTotals(
+        context: Context,
+        wallMs: Long,
+        contentMs: Long,
+        episodesFinished: Int,
+        sinceMs: Long
+    ) {
+        this.wallMs = maxOf(this.wallMs, wallMs)
+        this.contentMs = maxOf(this.contentMs, contentMs)
+        this.episodesFinished = maxOf(this.episodesFinished, episodesFinished)
+        if (sinceMs > 0 && (this.sinceMs == 0L || sinceMs < this.sinceMs)) this.sinceMs = sinceMs
+        val wall = this.wallMs
+        val content = this.contentMs
+        val finished = this.episodesFinished
+        val since = this.sinceMs
+        val appContext = context.applicationContext
+        prefsWriteScope.launch {
+            appContext.statsStore.edit {
+                it[longPreferencesKey(KEY_WALL)] = wall
+                it[longPreferencesKey(KEY_CONTENT)] = content
+                it[intPreferencesKey(KEY_FINISHED)] = finished
+                it[longPreferencesKey(KEY_SINCE)] = since
+            }
+        }
+    }
+
     fun reset(context: Context) {
         wallMs = 0
         contentMs = 0

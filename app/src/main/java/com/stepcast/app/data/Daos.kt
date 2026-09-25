@@ -255,6 +255,14 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun get(id: Long): Episode?
 
+    @Query("SELECT id FROM episodes WHERE podcastId = :podcastId AND guid = :guid LIMIT 1")
+    suspend fun idByGuid(podcastId: Long, guid: String): Long?
+
+    @Query(
+        "SELECT id FROM episodes WHERE podcastId = :podcastId AND audioUrl = :audioUrl LIMIT 1"
+    )
+    suspend fun idByAudioUrl(podcastId: Long, audioUrl: String): Long?
+
     @Query("SELECT * FROM episodes WHERE audioUrl = :audioUrl LIMIT 1")
     suspend fun getByAudioUrl(audioUrl: String): Episode?
 
@@ -466,6 +474,24 @@ interface EpisodeDao {
     @Query("DELETE FROM episodes WHERE podcastId = :podcastId")
     suspend fun deleteForPodcast(podcastId: Long)
 
+    /**
+     * New-episode notification candidates: rows added since the last alert
+     * that would also show in the New inbox (subscribed, unplayed, not
+     * dismissed, published inside the window and after subscribing — so a
+     * fresh subscription's back catalog never pings).
+     */
+    @Query(
+        "SELECT e.id AS id, p.title AS podcastTitle FROM episodes e " +
+            "INNER JOIN podcasts p ON p.id = e.podcastId " +
+            "WHERE e.id > :afterId AND e.played = 0 AND e.inboxDismissed = 0 " +
+            "AND p.subscribed = 1 AND e.pubDateMs >= MAX(:sinceMs, p.subscribedAt) " +
+            "ORDER BY e.pubDateMs DESC"
+    )
+    suspend fun notifyCandidates(afterId: Long, sinceMs: Long): List<NotifyCandidate>
+
+    @Query("SELECT COALESCE(MAX(id), 0) FROM episodes")
+    suspend fun maxId(): Long
+
     @Query("SELECT COUNT(*) FROM episodes")
     suspend fun countAll(): Int
 
@@ -491,6 +517,26 @@ interface EpisodeDao {
     /** Each show's newest episode date, for the Library's "most recent" sort. */
     @Query("SELECT podcastId, MAX(pubDateMs) AS latestMs FROM episodes GROUP BY podcastId")
     fun observeLatestEpisodeDates(): Flow<List<PodcastLatestEpisode>>
+
+    /** Backup restore of one episode's listening state (merged by the caller). */
+    @Query(
+        "UPDATE episodes SET played = :played, playedAtMs = :playedAtMs, " +
+            "positionMs = :positionMs, favorite = :favorite WHERE id = :id"
+    )
+    suspend fun restoreState(
+        id: Long,
+        played: Boolean,
+        playedAtMs: Long,
+        positionMs: Long,
+        favorite: Boolean
+    )
+
+    /** Rows carrying listening state worth backing up. */
+    @Query(
+        "SELECT podcastId, guid, audioUrl, played, playedAtMs, positionMs, favorite " +
+            "FROM episodes WHERE played = 1 OR positionMs > 0 OR favorite = 1"
+    )
+    suspend fun listWithState(): List<EpisodeStateRow>
 
     @Query("UPDATE episodes SET favorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: Long, favorite: Boolean)
@@ -556,6 +602,16 @@ interface ListenStatDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(stat: ListenStat): Long
+
+    /** Backup restore: never double-counts when the same file is restored twice. */
+    @Query(
+        "UPDATE listen_stats SET wallMs = MAX(wallMs, :wallMs), " +
+            "contentMs = MAX(contentMs, :contentMs) WHERE podcastId = :podcastId"
+    )
+    suspend fun raiseTo(podcastId: Long, wallMs: Long, contentMs: Long): Int
+
+    @Query("SELECT * FROM listen_stats")
+    suspend fun listAll(): List<ListenStat>
 
     @Query("SELECT * FROM listen_stats ORDER BY wallMs DESC LIMIT :limit")
     suspend fun top(limit: Int): List<ListenStat>
@@ -719,6 +775,20 @@ interface CategoryDao {
     @Query("DELETE FROM categories WHERE name = :name")
     suspend fun delete(name: String)
 }
+
+/** Projection for [EpisodeDao.listWithState] — backup of listening state. */
+data class EpisodeStateRow(
+    val podcastId: Long,
+    val guid: String,
+    val audioUrl: String,
+    val played: Boolean,
+    val playedAtMs: Long,
+    val positionMs: Long,
+    val favorite: Boolean
+)
+
+/** Projection for [EpisodeDao.notifyCandidates]. */
+data class NotifyCandidate(val id: Long, val podcastTitle: String)
 
 /** Projection for [EpisodeDao.observeCounts]. */
 data class EpisodeCounts(val total: Int, val unplayed: Int)

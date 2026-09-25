@@ -3,6 +3,18 @@
 Stepcast's external surface for Tasker, Bixby Routines, MacroDroid, adb,
 and anything else that can send an Android broadcast or intent.
 
+## Turn it on first
+
+Settings → Feeds & downloads → **Allow control from other apps**. The
+receiver is exported, so without this opt-in any installed app could mark
+episodes played and delete downloads. Installs that predate the setting
+start with it ON; fresh installs start OFF. While it's off, commands are
+refused (the playback journal logs `automation refused …`), and apps
+connecting to the media session get ordinary transport controls only —
+no library browsing and no Stepcast custom commands. The system UI,
+Bluetooth, Android Auto and Stepcast's own widgets/shortcuts are never
+affected.
+
 ## Broadcast commands
 
 Send an **explicit broadcast** to the command receiver:

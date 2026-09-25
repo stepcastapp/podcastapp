@@ -16,7 +16,7 @@ data class SearchResult(
 )
 
 /** Podcast directory search backed by the iTunes Search API. */
-class ItunesSearch(private val http: OkHttpClient = OkHttpClient()) {
+class ItunesSearch(private val http: OkHttpClient = Http.api) {
 
     /**
      * Apple's top-podcasts chart. The chart API doesn't include feed URLs,

@@ -86,29 +86,79 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         promoted: Boolean
     ): Result = withContext(Dispatchers.IO) {
         val repository = (applicationContext as StepcastApplication).repository
+        // Resumable: bytes land in a .part file that survives a failed or
+        // system-stopped attempt. Background downloads can't go foreground on
+        // Android 12+, so the OS stops them after ~10 minutes — without
+        // resume a big episode on a slow link restarted from byte 0 forever.
+        val part = File(file.parentFile, file.name + ".part")
+        val validator = File(file.parentFile, file.name + ".part.validator")
+        var startWritten = 0L
+        var written = 0L
         try {
             repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_RUNNING)
+            val existing = if (part.exists()) part.length() else 0L
+            val ifRange = validator.takeIf { it.exists() }?.readText()?.takeIf { it.isNotBlank() }
             val request = Request.Builder()
                 .url(episode.audioUrl)
-                .header("User-Agent", "Stepcast/0.5")
+                .header("User-Agent", com.stepcast.app.data.Http.USER_AGENT)
+                .apply {
+                    // If-Range: a CHANGED file (new ad insert, re-upload)
+                    // must come back whole (200), never be spliced onto
+                    // the old bytes
+                    if (existing > 0 && ifRange != null) {
+                        header("Range", "bytes=$existing-")
+                        header("If-Range", ifRange)
+                    }
+                }
                 .build()
             http.newCall(request).execute().use { response ->
+                if (response.code == 416) {
+                    // our partial is unusable (or the file shrank): start over
+                    part.delete()
+                    validator.delete()
+                    throw IOException("range not satisfiable; restarting")
+                }
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
                 val body = response.body ?: throw IOException("Empty body")
-                val total = body.contentLength()
+                val resuming = response.code == 206
+                startWritten = if (resuming) existing else 0L
+                val total = if (resuming) {
+                    response.header("Content-Range")
+                        ?.substringAfterLast('/')?.trim()?.toLongOrNull()
+                        ?: (body.contentLength().takeIf { it > 0 }?.plus(existing) ?: -1L)
+                } else {
+                    body.contentLength()
+                }
+                // remember what identifies THIS version of the file
+                val newValidator = response.header("ETag")
+                    ?.takeIf { !it.startsWith("W/") } // weak ETags can't validate a range
+                    ?: response.header("Last-Modified")
+                if (!resuming) {
+                    if (newValidator != null) validator.writeText(newValidator) else validator.delete()
+                }
+                // don't start a download the disk can't hold (keep 200 MB spare)
+                val dir = file.parentFile
+                if (total > 0 && dir != null &&
+                    dir.usableSpace < (total - startWritten) + FREE_SPACE_RESERVE
+                ) {
+                    throw IOException("not enough free space for $total bytes")
+                }
                 // first byte is flowing: 1% moves the row from "Waiting"
                 // to "Downloading" in the downloads screen immediately
-                repository.setDownloadProgress(episodeId, 1)
+                repository.setDownloadProgress(
+                    episodeId,
+                    if (total > 0) ((startWritten * 100) / total).toInt().coerceAtLeast(1) else 1
+                )
                 if (total <= 0 && promoted) {
                     // no Content-Length: indeterminate is the honest bar
                     runCatching {
                         updateProgressNotification(episode.title, 0, indeterminate = true)
                     }
                 }
-                var written = 0L
+                written = startWritten
                 var lastPct = -1
                 body.byteStream().use { input ->
-                    file.outputStream().use { output ->
+                    java.io.FileOutputStream(part, resuming).use { output ->
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
                             val read = input.read(buffer)
@@ -133,30 +183,52 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                 // A dropped connection can end the stream cleanly at 60% —
                 // recording that as DONE yields a file that plays and "ends"
                 // early (and then teaches the DB a wrong duration). When the
-                // server declared a length, hold it to it.
+                // server declared a length, hold it to it. The .part stays,
+                // so the retry resumes from here.
                 if (total > 0 && written < total) {
                     throw IOException("truncated download: $written of $total bytes")
                 }
             }
+            if (file.exists()) file.delete()
+            if (!part.renameTo(file)) throw IOException("could not finalize ${file.name}")
+            validator.delete()
             repository.setDownloaded(episodeId, file.absolutePath)
             Result.success()
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
-                file.delete()
-                repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_NONE)
+                // a user cancel discards the partial; a SYSTEM stop (10-minute
+                // limit, lost Wi-Fi) keeps it — WorkManager reschedules and
+                // the next run resumes instead of starting over
+                if (stopReason == androidx.work.WorkInfo.STOP_REASON_CANCELLED_BY_APP) {
+                    part.delete()
+                    validator.delete()
+                    repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_NONE)
+                }
             }
             throw e
         } catch (e: Exception) {
-            file.delete()
-            if (runAttemptCount < 2) {
+            // progress this attempt earns more retries — a flaky link that
+            // keeps moving forward should finish, not give up after three
+            val madeProgress = written > startWritten
+            if (runAttemptCount < 2 || (madeProgress && runAttemptCount < MAX_RESUMING_ATTEMPTS)) {
                 Result.retry()
             } else {
+                part.delete()
+                validator.delete()
                 // terminal for this enqueue — counts toward the auto-retry
                 // cutoff so dead enclosures stop reappearing every refresh
                 repository.recordDownloadFailure(episodeId)
                 Result.failure()
             }
         }
+    }
+
+    /** Expedited work needs this on pre-12 devices (it runs as a foreground service). */
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        val id = inputData.getLong(KEY_EPISODE_ID, -1)
+        val title = (applicationContext as StepcastApplication).repository
+            .episode(id)?.title.orEmpty()
+        return foregroundInfo(title, 0)
     }
 
     private val notificationId: Int
@@ -236,6 +308,8 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
 
     companion object {
         private val gate = Semaphore(2)
+        private const val FREE_SPACE_RESERVE = 200L * 1024 * 1024
+        private const val MAX_RESUMING_ATTEMPTS = 10
         private const val CHANNEL_ID = "downloads"
         private const val NOTIFICATION_GROUP = "stepcast-downloads"
         private const val SUMMARY_NOTIFICATION_ID = 19_999
@@ -244,10 +318,8 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
 
         const val KEY_EPISODE_ID = "episodeId"
 
-        private val http = OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .build()
+        // shared pool/cache with the rest of the app; downloads just wait longer
+        private val http: OkHttpClient get() = com.stepcast.app.data.Http.downloads
 
         private fun fileFor(context: Context, episode: Episode): File {
             val dir = File(context.getExternalFilesDir(null), "episodes")
@@ -273,7 +345,15 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
          * [allowMetered] is the one-shot override for THIS enqueue — the
          * global Wi-Fi-only setting stays untouched.
          */
-        fun start(context: Context, episodeId: Long, allowMetered: Boolean = false) {
+        fun start(
+            context: Context,
+            episodeId: Long,
+            allowMetered: Boolean = false,
+            // user taps run expedited: they may go foreground from the
+            // background and aren't cut off at ten minutes. Rule-driven
+            // auto-downloads pass false (expedited quota is small).
+            userInitiated: Boolean = true
+        ) {
             val app = context.applicationContext as StepcastApplication
             CoroutineScope(Dispatchers.IO).launch {
                 app.repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_RUNNING)
@@ -291,6 +371,16 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                         )
                         .build()
                 )
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
+                )
+                .apply {
+                    if (userInitiated) {
+                        setExpedited(
+                            androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST
+                        )
+                    }
+                }
                 .build()
             // REPLACE, not KEEP: retrying against a stale/stuck work record
             // (e.g. after a force-stop) must actually enqueue a fresh run
@@ -340,6 +430,11 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         /** Cancels a queued/running download and resets its state. */
         fun cancel(context: Context, episodeId: Long) {
             WorkManager.getInstance(context).cancelUniqueWork(workName(episodeId))
+            // belt and braces: a worker that was still queued never runs its
+            // cancellation handler, so its old partial would linger
+            File(context.getExternalFilesDir(null), "episodes").listFiles()
+                ?.filter { it.name.startsWith("episode-$episodeId.") && it.name.contains(".part") }
+                ?.forEach { it.delete() }
             val app = context.applicationContext as StepcastApplication
             CoroutineScope(Dispatchers.IO).launch {
                 app.repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_NONE)

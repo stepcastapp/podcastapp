@@ -12,8 +12,11 @@ import org.json.JSONObject
 
 /**
  * Stepcast's own backup format: one JSON file carrying subscriptions
- * (with per-podcast settings), categories, SmartPlays, and app settings.
- * Episodes are deliberately NOT included — a refresh refetches them.
+ * (with per-podcast settings), categories, SmartPlays, app settings, and
+ * (v3) listening state: played/position/favorite per episode, Up Next,
+ * saved one-off episodes and listening stats. Episode METADATA is not
+ * included — a refresh refetches it, and the staged state is applied as
+ * each feed fills in (see [EpisodeStateRestore]).
  * SmartPlay feed scopes are stored by feedUrl so backups survive database
  * ID changes.
  */
@@ -37,6 +40,25 @@ object StepcastBackup {
             } ?: throw IllegalArgumentException("Couldn't open the destination file")
         }
 
+    /** Writes the backup JSON to a private file (the cloud-backup snapshot). */
+    suspend fun exportToFile(repository: PodcastRepository, file: java.io.File) =
+        withContext(Dispatchers.IO) {
+            file.parentFile?.mkdirs()
+            val tmp = java.io.File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(buildJson(repository).toString())
+            if (!tmp.renameTo(file)) throw java.io.IOException("could not write ${file.name}")
+        }
+
+    suspend fun importFromFile(
+        context: Context,
+        repository: PodcastRepository,
+        file: java.io.File
+    ): Summary = withContext(Dispatchers.IO) {
+        val json = JSONObject(file.readText())
+        if (!json.has("stepcast")) throw IllegalArgumentException("Not a Stepcast backup file")
+        applyJson(context, repository, json)
+    }
+
     suspend fun import(
         context: Context,
         repository: PodcastRepository,
@@ -54,7 +76,7 @@ object StepcastBackup {
 
     private suspend fun buildJson(repository: PodcastRepository): JSONObject {
         val root = JSONObject()
-        root.put("stepcast", 2)
+        root.put("stepcast", 3)
         root.put("exportedAt", System.currentTimeMillis())
 
         val categories = JSONArray()
@@ -130,6 +152,63 @@ object StepcastBackup {
             )
         }
         root.put("smartPlays", smartPlays)
+
+        // v3: listening state. Without it a restore (the sideload → Play
+        // migration, a new phone) brought every back-catalog episode back
+        // unplayed and every half-listened one back at zero.
+        root.put(
+            "episodeState",
+            JSONArray().apply {
+                repository.exportEpisodeStates().forEach {
+                    put(EpisodeStateRestore.entryToJson(it))
+                }
+            }
+        )
+        root.put(
+            "queue",
+            JSONArray().apply {
+                repository.exportQueueRefs().forEach { put(EpisodeStateRestore.queueToJson(it)) }
+            }
+        )
+        val saved = JSONArray()
+        for ((podcast, episodes) in repository.savedEpisodeShows()) {
+            for (ep in episodes) {
+                saved.put(
+                    JSONObject()
+                        .put("feedUrl", podcast.feedUrl)
+                        .put("podcastTitle", podcast.title)
+                        .put("podcastImageUrl", podcast.imageUrl ?: JSONObject.NULL)
+                        .put("podcastAuthor", podcast.author)
+                        .put("guid", ep.guid)
+                        .put("title", ep.title)
+                        .put("description", ep.description)
+                        .put("audioUrl", ep.audioUrl)
+                        .put("imageUrl", ep.imageUrl ?: JSONObject.NULL)
+                        .put("pubDateMs", ep.pubDateMs)
+                        .put("durationMs", ep.durationMs)
+                )
+            }
+        }
+        root.put("savedEpisodes", saved)
+        root.put(
+            "listenStats",
+            JSONArray().apply {
+                repository.exportListenStats().forEach { (feed, wall, content) ->
+                    put(
+                        JSONObject().put("feedUrl", feed)
+                            .put("wallMs", wall).put("contentMs", content)
+                    )
+                }
+            }
+        )
+        root.put(
+            "statsTotals",
+            JSONObject()
+                .put("wallMs", ListenStats.wallMs)
+                .put("contentMs", ListenStats.contentMs)
+                .put("episodesFinished", ListenStats.episodesFinished)
+                .put("sinceMs", ListenStats.sinceMs)
+        )
 
         root.put(
             "settings",
@@ -254,6 +333,79 @@ object StepcastBackup {
             }
             urlToId[url] = id
             feeds++
+        }
+
+        // v3: saved one-off episodes (their shows are unsubscribed and never
+        // refresh, so they're inserted directly from the backup's metadata)
+        val savedEpisodes = json.optJSONArray("savedEpisodes") ?: JSONArray()
+        val savedShowIds = HashMap<String, Long>()
+        for (i in 0 until savedEpisodes.length()) {
+            val o = savedEpisodes.optJSONObject(i) ?: continue
+            val feedUrl = o.stringOrNull("feedUrl") ?: continue
+            val audioUrl = o.stringOrNull("audioUrl") ?: continue
+            runCatching {
+                val episode = ParsedEpisode(
+                    guid = o.stringOrNull("guid") ?: audioUrl,
+                    title = o.stringOrNull("title") ?: "(untitled)",
+                    description = o.optString("description", ""),
+                    audioUrl = audioUrl,
+                    imageUrl = o.stringOrNull("imageUrl"),
+                    pubDateMs = o.optLong("pubDateMs", 0L),
+                    durationMs = o.optLong("durationMs", 0L)
+                )
+                val feed = ParsedFeed(
+                    title = o.stringOrNull("podcastTitle") ?: feedUrl,
+                    description = "",
+                    imageUrl = o.stringOrNull("podcastImageUrl"),
+                    author = o.optString("podcastAuthor", ""),
+                    episodes = listOf(episode)
+                )
+                repository.saveEpisodeWithoutSubscribing(feedUrl, feed, episode)
+                repository.podcastIdForFeed(feedUrl)?.let { savedShowIds[feedUrl] = it }
+            }
+        }
+
+        // v3: listening state — staged, then applied as each feed's rows
+        // exist (right now for shows already here, on first refresh for stubs)
+        val stateJson = json.optJSONArray("episodeState") ?: JSONArray()
+        val states = buildList {
+            for (i in 0 until stateJson.length()) {
+                stateJson.optJSONObject(i)?.let(EpisodeStateRestore::entryFromJson)?.let(::add)
+            }
+        }
+        val queueJson = json.optJSONArray("queue") ?: JSONArray()
+        val queueRefs = buildList {
+            for (i in 0 until queueJson.length()) {
+                queueJson.optJSONObject(i)?.let(EpisodeStateRestore::queueFromJson)?.let(::add)
+            }
+        }
+        EpisodeStateRestore.stage(context, states, queueRefs)
+        val knownFeeds = HashMap<String, Long>().apply {
+            putAll(urlToId)
+            putAll(savedShowIds)
+        }
+        for ((feedUrl, id) in knownFeeds) {
+            // stubs have no rows yet; applying now would just mark their
+            // references "missing" before the first refresh inserts them
+            val podcast = repository.podcast(id) ?: continue
+            if (podcast.lastRefreshed == 0L) continue
+            EpisodeStateRestore.applyFor(context, repository, id, feedUrl)
+        }
+
+        val statsJson = json.optJSONArray("listenStats") ?: JSONArray()
+        for (i in 0 until statsJson.length()) {
+            val o = statsJson.optJSONObject(i) ?: continue
+            val id = o.stringOrNull("feedUrl")?.let { repository.podcastIdForFeed(it) } ?: continue
+            repository.restoreListenStat(id, o.optLong("wallMs"), o.optLong("contentMs"))
+        }
+        json.optJSONObject("statsTotals")?.let { t ->
+            ListenStats.restoreTotals(
+                context,
+                wallMs = t.optLong("wallMs"),
+                contentMs = t.optLong("contentMs"),
+                episodesFinished = t.optInt("episodesFinished"),
+                sinceMs = t.optLong("sinceMs")
+            )
         }
 
         // SmartPlays

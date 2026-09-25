@@ -50,6 +50,13 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
             planNextCheck(app)
             return@withContext Result.success()
         }
+        // the notification watermark must exist BEFORE this run inserts
+        // anything, or the very first run would alert about nothing
+        val notifyPrefs = applicationContext.getSharedPreferences(NOTIFY_PREFS, Context.MODE_PRIVATE)
+        if (!notifyPrefs.contains(KEY_LAST_NOTIFIED_ID)) {
+            notifyPrefs.edit()
+                .putLong(KEY_LAST_NOTIFIED_ID, app.repository.maxEpisodeId()).apply()
+        }
         val force = inputData.getBoolean(KEY_FORCE, false)
         // category-scoped run (automation's REFRESH_CATEGORY): only that
         // category's members, matched case-insensitively
@@ -132,8 +139,18 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
                 }
             }.awaitAll()
         }
-        val newCount = results.sumOf { it.first }
-        val updatedPodcasts = results.filter { it.first > 0 }.map { it.second }
+        val fetchedCount = results.sumOf { it.first }
+        // What to announce is "everything new since the last alert", not
+        // "what THIS run found": with only-at-checkpoints on, Automatic mode
+        // finds most episodes in off-checkpoint release-window checks, and
+        // the old per-run count dropped those forever — the next checkpoint
+        // run found nothing new and stayed silent. The watermark only moves
+        // once an alert is posted (or deliberately not wanted).
+        val lastNotifiedId = notifyPrefs.getLong(KEY_LAST_NOTIFIED_ID, 0L)
+        val watermark = app.repository.maxEpisodeId()
+        val pending = app.repository.notifyCandidates(lastNotifiedId)
+        val newCount = pending.size
+        val updatedPodcasts = pending.map { it.podcastTitle }
         // "random notifications throughout the day" — with only-at-checkpoints
         // on (default), release-window and baseline checks stay silent and
         // alerts batch up near the user's Fresh-by times
@@ -145,29 +162,38 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         // from the outside
         val notifyVerdict = when {
             newCount == 0 -> "nothing new"
+            // in-app refresh: the user is looking at the result already
             !wantsNotify -> "suppressed: silent refresh"
             !settings.newEpisodeNotifications -> "suppressed: notifications off"
             settings.notifyOnlyAtCheckpoints && !atCheckpoint ->
-                "suppressed: not near a checkpoint"
+                "deferred: waiting for the next checkpoint"
             // checked HERE as well as inside the post, so the journal can
             // never claim "posted" for an alert the OS actually dropped
             !notificationsPermitted() -> "suppressed: permission denied"
             else -> "posted"
         }
         PlaybackJournal.logSchedule(
-            "notify", "$notifyVerdict new=$newCount shows=${updatedPodcasts.size}"
+            "notify",
+            "$notifyVerdict pending=$newCount fetched=$fetchedCount " +
+                "shows=${updatedPodcasts.distinct().size}"
         )
         if (notifyVerdict == "posted") {
             postNewEpisodesNotification(newCount, updatedPodcasts)
+        }
+        // everything except a deferral consumes the pending set
+        if (!notifyVerdict.startsWith("deferred")) {
+            notifyPrefs.edit().putLong(KEY_LAST_NOTIFIED_ID, watermark).apply()
         }
         // the hourly periodic tick is only the safety net — plan a precise
         // wake-up at the earliest next promise (checkpoint, expected release,
         // pinned slot) so 6:30 means 6:30, not "the tick after 6:30"
         planNextCheck(app, expected)
+        // keep the Google-backup copy of the library roughly current
+        CloudLibrarySnapshot.refreshIfStale(applicationContext, app.repository)
         // every due feed failing usually means a dead network the
         // constraint didn't catch — back off and retry instead of
         // pretending success
-        if (due.isNotEmpty() && results.all { it.first == 0 } &&
+        if (due.isNotEmpty() && fetchedCount == 0 &&
             due.size == results.size && failuresThisRun.get() == due.size
         ) {
             return@withContext Result.retry()
@@ -297,20 +323,27 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(
             NotificationChannel(
-                CHANNEL_ID, "New episodes", NotificationManager.IMPORTANCE_DEFAULT
+                CHANNEL_ID,
+                context.getString(R.string.notif_channel_new_episodes),
+                NotificationManager.IMPORTANCE_DEFAULT
             )
         )
+        // straight to the New-episodes inbox — that's what the alert is about
         val contentIntent = PendingIntent.getActivity(
             context,
             0,
-            Intent(context, MainActivity::class.java),
+            Intent(context, MainActivity::class.java)
+                .setAction(MainActivity.ACTION_OPEN_INBOX)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             // the proper monochrome status-bar glyph — the adaptive launcher
             // foreground renders as an oversized blob in the status bar
             .setSmallIcon(R.drawable.ic_notification_steps)
-            .setContentTitle(if (count == 1) "1 new episode" else "$count new episodes")
+            .setContentTitle(
+                context.resources.getQuantityString(R.plurals.notif_new_episodes, count, count)
+            )
             .setContentText(podcasts.distinct().joinToString(", "))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
@@ -328,6 +361,8 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) :
         private const val KEY_PLAN_ONLY = "planOnly"
         private const val CHANNEL_ID = "new_episodes"
         private const val NOTIFICATION_ID = 100
+        private const val NOTIFY_PREFS = "stepcast_notify"
+        private const val KEY_LAST_NOTIFIED_ID = "lastNotifiedEpisodeId"
 
         fun schedulePeriodic(context: Context) {
             // hourly tick; per-category cadence decides which feeds are due

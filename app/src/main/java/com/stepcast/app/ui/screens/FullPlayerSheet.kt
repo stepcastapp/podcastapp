@@ -709,7 +709,7 @@ fun FullPlayerSheet(
                             dialogContext.sendBroadcast(
                                 android.content.Intent(
                                     dialogContext,
-                                    com.stepcast.app.playback.CommandReceiver::class.java
+                                    com.stepcast.app.playback.InternalCommandReceiver::class.java
                                 ).setAction(
                                     com.stepcast.app.playback.CommandReceiver
                                         .ACTION_REFRESH_NOTIF_BUTTONS

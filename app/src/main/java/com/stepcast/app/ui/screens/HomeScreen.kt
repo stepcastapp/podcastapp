@@ -162,6 +162,40 @@ fun HomeScreen(
                         title = stringResource(R.string.nothing_here_yet),
                         hint = stringResource(R.string.home_empty_hint)
                     )
+                    // a new phone restored from Google backup carries a
+                    // library snapshot — bring it back in one tap
+                    val hasSnapshot = remember {
+                        com.stepcast.app.sync.CloudLibrarySnapshot.exists(context)
+                    }
+                    var restoring by remember { mutableStateOf(false) }
+                    val restoreScope = androidx.compose.runtime.rememberCoroutineScope()
+                    if (hasSnapshot) {
+                        androidx.compose.material3.Button(
+                            enabled = !restoring,
+                            onClick = {
+                                restoring = true
+                                restoreScope.launch {
+                                    val result = runCatching {
+                                        com.stepcast.app.sync.CloudLibrarySnapshot
+                                            .restore(context, repository)
+                                    }
+                                    restoring = false
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        result.fold(
+                                            { context.getString(R.string.restore_previous_phone_done, it.feeds) },
+                                            { context.getString(R.string.restore_previous_phone_failed) }
+                                        ),
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                    if (result.isSuccess) RefreshWorker.refreshNow(context)
+                                }
+                            },
+                            modifier = Modifier.padding(top = 20.dp)
+                        ) {
+                            Text(stringResource(R.string.restore_previous_phone))
+                        }
+                    }
                     // a fresh install shouldn't have to hunt through header
                     // icons and Settings to get its first shows
                     androidx.compose.material3.Button(

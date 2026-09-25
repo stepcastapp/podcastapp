@@ -59,6 +59,13 @@ class MainActivity : ComponentActivity() {
     private var sharedFeedUrl: String? = null
     private val shareNonce = androidx.compose.runtime.mutableStateOf(0)
 
+    /** Bumped when a new-episodes notification asks for the inbox. */
+    private val openInboxNonce = androidx.compose.runtime.mutableStateOf(0)
+
+    private fun handleOpenInbox(intent: android.content.Intent?) {
+        if (intent?.action == ACTION_OPEN_INBOX) openInboxNonce.value++
+    }
+
     private fun extractFeedUrl(intent: android.content.Intent?): String? {
         intent ?: return null
         return when (intent.action) {
@@ -77,7 +84,7 @@ class MainActivity : ComponentActivity() {
         val name = intent.getStringExtra("smartplay") ?: return
         sendBroadcast(
             android.content.Intent(
-                this, com.stepcast.app.playback.CommandReceiver::class.java
+                this, com.stepcast.app.playback.InternalCommandReceiver::class.java
             )
                 .setAction(
                     com.stepcast.app.playback.CommandReceiver.ACTION_START_SMART_PLAY
@@ -93,6 +100,7 @@ class MainActivity : ComponentActivity() {
             shareNonce.value++
         }
         handleSmartPlayShortcut(intent)
+        handleOpenInbox(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -111,8 +119,8 @@ class MainActivity : ComponentActivity() {
                 shareNonce.value++
             }
             handleSmartPlayShortcut(intent)
+            handleOpenInbox(intent)
         }
-        com.stepcast.app.ui.theme.ThemePrefs.init(this)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -145,7 +153,9 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             StepcastTheme {
-                StepcastApp(playerConnection, sharedFeedUrl, shareNonce.value)
+                StepcastApp(
+                    playerConnection, sharedFeedUrl, shareNonce.value, openInboxNonce.value
+                )
             }
         }
     }
@@ -154,13 +164,19 @@ class MainActivity : ComponentActivity() {
         playerConnection.release()
         super.onDestroy()
     }
+
+    companion object {
+        /** New-episodes notification tap: open straight into the inbox. */
+        const val ACTION_OPEN_INBOX = "com.stepcast.app.OPEN_INBOX"
+    }
 }
 
 @Composable
 fun StepcastApp(
     player: PlayerConnection,
     sharedFeedUrl: String? = null,
-    shareNonce: Int = 0
+    shareNonce: Int = 0,
+    openInboxNonce: Int = 0
 ) {
     val navController = rememberNavController()
     val app = LocalContext.current.applicationContext as StepcastApplication
@@ -183,6 +199,12 @@ fun StepcastApp(
         if (!sharedFeedUrl.isNullOrBlank()) {
             pendingSearchQuery = sharedFeedUrl
             navController.navigate("search") { launchSingleTop = true }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(openInboxNonce) {
+        if (openInboxNonce > 0) {
+            playerExpanded = false
+            navController.navigate("inbox") { launchSingleTop = true }
         }
     }
     // the prefill is consumed once the user LEAVES search — reopening it
