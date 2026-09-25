@@ -135,6 +135,76 @@ class PlaybackService : MediaLibraryService() {
     private var currentAdJumpSec = 0
     private var lastWidgetArtUri: String? = null
 
+    // ---- Chromecast -----------------------------------------------------
+
+    private var playerListener: Player.Listener? = null
+    private var castPlayer: androidx.media3.cast.CastPlayer? = null
+
+    /**
+     * When a Cast session starts, the session's player switches from
+     * ExoPlayer to a CastPlayer carrying the same queue and position (from
+     * each episode's ORIGINAL URL — a receiver can't read the phone's
+     * downloads); when it ends, playback comes back to the phone where the
+     * TV left off. Everything above (notification, widgets, Auto, the app)
+     * talks to the MediaSession, so it follows the switch. No-op without
+     * Google Play services.
+     */
+    private fun setUpCast() {
+        val castContext = CastSupport.castContext(this) ?: return
+        val cast = runCatching { androidx.media3.cast.CastPlayer(castContext) }.getOrNull() ?: return
+        castPlayer = cast
+        playerListener?.let { cast.addListener(it) }
+        cast.setSessionAvailabilityListener(object : androidx.media3.cast.SessionAvailabilityListener {
+            override fun onCastSessionAvailable() {
+                val from = exoPlayer ?: return
+                handOff(from, cast, toCast = true)
+            }
+
+            override fun onCastSessionUnavailable() {
+                val to = exoPlayer ?: return
+                handOff(cast, to, toCast = false)
+            }
+        })
+        if (cast.isCastSessionAvailable) exoPlayer?.let { handOff(it, cast, toCast = true) }
+    }
+
+    private fun handOff(from: Player, to: Player, toCast: Boolean) {
+        val ids = (0 until from.mediaItemCount).map { from.getMediaItemAt(it).mediaId }
+        val index = from.currentMediaItemIndex
+        val position = from.currentPosition.coerceAtLeast(0)
+        val playWhenReady = from.playWhenReady
+        persistPosition(if (toCast) "cast-start" else "cast-end")
+        from.pause()
+        PlaybackJournal.log(
+            "cast", "${if (toCast) "to TV" else "back to phone"} items=${ids.size} idx=$index pos=$position"
+        )
+        serviceScope.launch {
+            val items = ArrayList<MediaItem>()
+            var newIndex = 0
+            for ((i, id) in ids.withIndex()) {
+                val episode = id.toLongOrNull()?.takeIf { it > 0 }
+                    ?.let { app.repository.episode(it) } ?: continue
+                val podcast = app.repository.podcast(episode.podcastId)
+                val item = if (toCast) {
+                    CastSupport.castItem(episode, podcast?.title, podcast?.imageUrl)
+                } else {
+                    app.repository.playableUri(episode)?.let { episodeToItem(episode, podcast) }
+                } ?: continue
+                if (i == index) newIndex = items.size
+                items += item
+            }
+            from.stop()
+            from.clearMediaItems()
+            if (items.isNotEmpty()) {
+                to.setMediaItems(items, newIndex, position)
+                to.prepare()
+                to.playWhenReady = playWhenReady
+            }
+            mediaSession?.player = to
+            publishWidgetState()
+        }
+    }
+
     /** Volume boost (Settings); null while off or unsupported. */
     private var loudness: android.media.audiofx.LoudnessEnhancer? = null
 
@@ -199,7 +269,7 @@ class PlaybackService : MediaLibraryService() {
                 .collect { applyVolumeBoost() }
         }
 
-        player.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 publishWidgetState()
                 mediaItem ?: return
@@ -302,7 +372,9 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
-        })
+        }
+        playerListener = listener
+        player.addListener(listener)
 
         // tapping the media notification opens the app
         val sessionActivity = PendingIntent.getActivity(
@@ -323,6 +395,8 @@ class PlaybackService : MediaLibraryService() {
             // instead of Media3's minimal one.
             .setBitmapLoader(CoilBitmapLoader(this, serviceScope))
             .build()
+
+        setUpCast()
 
         // brand the status-bar icon with the stairstep silhouette
         setMediaNotificationProvider(
@@ -824,7 +898,17 @@ class PlaybackService : MediaLibraryService() {
                 // list; everything else stays one-in-one-out (or drops)
                 mediaItems.flatMap { item ->
                     val voiceQuery = item.requestMetadata.searchQuery
+                    val casting = castPlayer != null && mediaSession?.player === castPlayer
                     when {
+                        // while casting, items built for the PHONE (downloads
+                        // = file://) must become the receiver-readable URL
+                        casting && item.mediaId.toLongOrNull() != null -> {
+                            val episode = app.repository.episode(item.mediaId.toLong())
+                            val podcast = episode?.let { app.repository.podcast(it.podcastId) }
+                            listOfNotNull(
+                                episode?.let { CastSupport.castItem(it, podcast?.title, podcast?.imageUrl) }
+                            )
+                        }
                         item.localConfiguration != null -> listOf(item)
                         // "Hey Google, play <show> on Stepcast" / Android
                         // Auto voice: a query instead of an id
@@ -1104,8 +1188,14 @@ class PlaybackService : MediaLibraryService() {
         }
         loudness?.release()
         loudness = null
+        // both players, whichever one the session currently holds — each
+        // exactly once
+        exoPlayer?.release()
+        exoPlayer = null
+        castPlayer?.setSessionAvailabilityListener(null)
+        castPlayer?.release()
+        castPlayer = null
         mediaSession?.run {
-            player.release()
             release()
             mediaSession = null
         }

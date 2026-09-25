@@ -633,4 +633,19 @@
     <string name="download_storage_limit_hint">0 = no limit. When full, played downloads are removed first; unplayed ones are never deleted to make room</string>
     <string name="downloads_on_sd_card">Store downloads on SD card</string>
     <string name="downloads_on_sd_card_hint">New downloads only; existing files stay where they are. Falls back to phone storage if the card is removed</string>
+    <string name="cast">Cast</string>
+    <string name="sync">Sync</string>
+    <string name="sync_intro">Keep subscriptions and listening progress in step with other devices and apps (AntennaPod, Kasts…) through gpodder.net or your own Nextcloud with the gPodder Sync app. Runs hourly.</string>
+    <string name="sync_off">Off</string>
+    <string name="sync_nextcloud">Nextcloud</string>
+    <string name="sync_gpodder_net">gpodder.net</string>
+    <string name="sync_server_nextcloud">Nextcloud address (https://cloud.example.com)</string>
+    <string name="sync_server_gpodder">Server (blank = https://gpodder.net)</string>
+    <string name="sync_user">Username</string>
+    <string name="sync_password">Password or app password</string>
+    <string name="sync_saved">Sync settings saved</string>
+    <string name="sync_now">Sync now</string>
+    <string name="syncing">Syncing…</string>
+    <string name="sync_last_ok">Last synced %1$s</string>
+    <string name="sync_last_failed">Last sync failed: %1$s</string>
 </resources>

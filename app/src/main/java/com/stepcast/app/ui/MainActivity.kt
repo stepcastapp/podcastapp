@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -220,6 +221,48 @@ fun StepcastApp(
         }
     }
 
+    // tablets / unfolded foldables / landscape: a navigation rail on the
+    // side instead of the bottom bar (a two-item bar stretched across
+    // 900dp reads as broken, and the rail gives the content the height)
+    val wide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
+
+    val navColors = NavigationBarItemDefaults.colors(
+        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+    )
+    // child routes highlight the tab they were opened from, so
+    // the bottom bar always shows where you are
+    val queueOwned = currentRoute == "queue" ||
+        currentRoute == "downloads" ||
+        currentRoute == "history" ||
+        currentRoute?.startsWith("smartplay/") == true ||
+        // a podcast opened FROM a queue-owned screen keeps
+        // that tab lit (the route carries its origin)
+        (currentRoute?.startsWith("podcast/") == true &&
+            backStackEntry?.arguments?.getString("from") == "queue")
+    // save/restore instead of destroy/recreate, so each tab
+    // keeps its scroll position across switches; tapping the
+    // tab you're already on returns to that tab's root
+    fun goToTab(route: String) {
+        // nav taps land UNDER the player overlay — collapse it
+        playerExpanded = false
+        if (currentRoute == route) return
+        // deeper inside this tab's stack? pop back to its root
+        if (navController.popBackStack(route, inclusive = false)) {
+            return
+        }
+        navController.navigate(route) {
+            popUpTo(navController.graph.startDestinationId) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+    val railColors = androidx.compose.material3.NavigationRailItemDefaults.colors(
+        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+    )
     Scaffold(
         bottomBar = {
             Column {
@@ -232,68 +275,65 @@ fun StepcastApp(
                         onExpand = { playerExpanded = true }
                     )
                 }
-                NavigationBar {
-                    val navColors = NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    // child routes highlight the tab they were opened from, so
-                    // the bottom bar always shows where you are
-                    val queueOwned = currentRoute == "queue" ||
-                        currentRoute == "downloads" ||
-                        currentRoute == "history" ||
-                        currentRoute?.startsWith("smartplay/") == true ||
-                        // a podcast opened FROM a queue-owned screen keeps
-                        // that tab lit (the route carries its origin)
-                        (currentRoute?.startsWith("podcast/") == true &&
-                            backStackEntry?.arguments?.getString("from") == "queue")
-                    // save/restore instead of destroy/recreate, so each tab
-                    // keeps its scroll position across switches; tapping the
-                    // tab you're already on returns to that tab's root
-                    fun goToTab(route: String) {
-                        // nav taps land UNDER the player overlay — collapse it
-                        playerExpanded = false
-                        if (currentRoute == route) return
-                        // deeper inside this tab's stack? pop back to its root
-                        if (navController.popBackStack(route, inclusive = false)) {
-                            return
-                        }
-                        navController.navigate(route) {
-                            popUpTo(navController.graph.startDestinationId) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
-                    NavigationBarItem(
-                        selected = currentRoute != null && !queueOwned,
-                        onClick = { goToTab("home") },
-                        icon = { Icon(Icons.Rounded.Home, contentDescription = stringResource(R.string.library)) },
-                        colors = navColors
-                    )
-                    NavigationBarItem(
-                        selected = queueOwned,
-                        onClick = { goToTab("queue") },
-                        icon = {
-                            BadgedBox(badge = {
-                                if (queue.isNotEmpty()) {
-                                    Badge { Text(queue.size.toString()) }
+                if (!wide) {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = currentRoute != null && !queueOwned,
+                            onClick = { goToTab("home") },
+                            icon = { Icon(Icons.Rounded.Home, contentDescription = stringResource(R.string.library)) },
+                            colors = navColors
+                        )
+                        NavigationBarItem(
+                            selected = queueOwned,
+                            onClick = { goToTab("queue") },
+                            icon = {
+                                BadgedBox(badge = {
+                                    if (queue.isNotEmpty()) {
+                                        Badge { Text(queue.size.toString()) }
+                                    }
+                                }) {
+                                    Icon(
+                                        Icons.AutoMirrored.Rounded.QueueMusic,
+                                        contentDescription = stringResource(R.string.up_next)
+                                    )
                                 }
-                            }) {
-                                Icon(
-                                    Icons.AutoMirrored.Rounded.QueueMusic,
-                                    contentDescription = stringResource(R.string.up_next)
-                                )
-                            }
-                        },
-                        colors = navColors
-                    )
+                            },
+                            colors = navColors
+                        )
+                    }
                 }
             }
         }
     ) { padding ->
-        androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
+        androidx.compose.foundation.layout.Row(Modifier.padding(padding)) {
+        if (wide) {
+            androidx.compose.material3.NavigationRail {
+                NavigationRailItem(
+                    selected = currentRoute != null && !queueOwned,
+                    onClick = { goToTab("home") },
+                    icon = { Icon(Icons.Rounded.Home, contentDescription = stringResource(R.string.library)) },
+                    colors = railColors
+                )
+                NavigationRailItem(
+                    selected = queueOwned,
+                    onClick = { goToTab("queue") },
+                    icon = {
+                        BadgedBox(badge = {
+                            if (queue.isNotEmpty()) {
+                                Badge { Text(queue.size.toString()) }
+                            }
+                        }) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.QueueMusic,
+                                contentDescription = stringResource(R.string.up_next)
+                            )
+                        }
+                    },
+                    colors = railColors
+                )
+            }
+        }
+        androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
         NavHost(
             navController = navController,
             startDestination = "home",
@@ -511,6 +551,7 @@ fun StepcastApp(
                 },
                 onDismiss = { playerExpanded = false }
             )
+        }
         }
         }
     }

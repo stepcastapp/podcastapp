@@ -150,6 +150,23 @@ but re-check it if Tasker stops working.
 
 ## Data Safety answers (reference)
 
+**Re-check after review wave 5** (sync, Cast, Podcast Index, cloud
+library snapshot):
+- Optional **gPodder/Nextcloud sync** transmits subscriptions and
+  listening progress to a server the USER chooses and controls. Google's
+  guidance treats user-directed transfers to the user's own service as
+  outside "collection", but if in doubt declare *App activity → Other
+  actions* as **collected, optional, not shared**, purpose *App
+  functionality*.
+- The **Cast SDK** (Google Play services) is a third-party SDK: check its
+  entry in Google's SDK Index / the Play SDK data-safety guidance and
+  mirror what it declares.
+- Podcast Index / Apple search: search terms only, no identifiers — not
+  collection.
+- The privacy policy (`docs/stepcast-privacy.md`) was updated for all of
+  the above.
+
+
 - Does your app collect or share any of the required user data types? **No**
 - Encrypted in transit? N/A (nothing collected)
 - Deletion request mechanism? N/A

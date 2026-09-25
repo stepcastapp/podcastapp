@@ -942,6 +942,12 @@ fun SettingsScreen(
         SectionDivider()
 
         // ---- BeyondPod import ----------------------------------------------
+        SectionHeader(stringResource(R.string.sync), sectionOpen("Sync")) {
+            toggleSection("Sync")
+        }
+        if (sectionOpen("Sync")) {
+            SyncSettings(repository)
+        }
         SectionHeader(stringResource(R.string.import_from_beyondpod), sectionOpen("Import from BeyondPod")) {
             toggleSection("Import from BeyondPod")
         }

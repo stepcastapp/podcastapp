@@ -1531,6 +1531,21 @@ class PodcastRepository(
         }.onFailure { PlaybackJournal.log("restore-state", "failed pod=$podcastId: $it") }
     }
 
+    // ---- gPodder sync support ------------------------------------------------
+
+    suspend fun progressChangedSince(sinceMs: Long): List<SyncProgressRow> =
+        db.episodeDao().progressChangedSince(sinceMs)
+
+    suspend fun applySyncedPosition(episodeId: Long, positionMs: Long, atMs: Long) =
+        db.episodeDao().applySyncedPosition(episodeId, positionMs.coerceAtLeast(0), atMs)
+
+    /** Finished on another device: played, dated when it happened there. */
+    suspend fun markPlayedFromSync(episodeId: Long, atMs: Long) {
+        db.episodeDao().setPlayed(episodeId, true, atMs)
+        db.queueDao().remove(episodeId)
+        PlaybackJournal.log("played", "sync ep=$episodeId")
+    }
+
     /** "Finished" mark used by completion and done-and-delete paths. */
     suspend fun markPlayed(episodeId: Long, source: String = "ui") {
         val wasPlayed = db.episodeDao().get(episodeId)?.played ?: false

@@ -577,6 +577,8 @@ fun FullPlayerSheet(
                         )
                     }
                 }
+                // only present when a Cast device is on the network
+                CastButton()
                 IconButton(onClick = { bookmarksOpen = true }, enabled = episode != null) {
                     Icon(
                         Icons.Rounded.BookmarkAdd,

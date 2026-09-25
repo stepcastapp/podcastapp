@@ -33,6 +33,10 @@ jobs:
 
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
+        env:
+          # optional: Podcast Index directory in Discover (empty = off)
+          PODCASTINDEX_KEY: ${{ secrets.PODCASTINDEX_KEY }}
+          PODCASTINDEX_SECRET: ${{ secrets.PODCASTINDEX_SECRET }}
 
       - name: Unit tests
         run: gradle testDebugUnitTest --stacktrace
@@ -40,6 +44,9 @@ jobs:
       # R8-minified, same shared signing — the build users should sideload
       - name: Build release APK
         run: gradle assembleRelease --stacktrace
+        env:
+          PODCASTINDEX_KEY: ${{ secrets.PODCASTINDEX_KEY }}
+          PODCASTINDEX_SECRET: ${{ secrets.PODCASTINDEX_SECRET }}
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

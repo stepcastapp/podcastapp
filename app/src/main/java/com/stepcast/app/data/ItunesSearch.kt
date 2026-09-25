@@ -16,7 +16,34 @@ data class SearchResult(
 )
 
 /** Podcast directory search backed by the iTunes Search API. */
-class ItunesSearch(private val http: OkHttpClient = Http.api) {
+class ItunesSearch(
+    private val http: OkHttpClient = Http.api,
+    private val podcastIndex: PodcastIndexSearch = PodcastIndexSearch(http)
+) {
+
+    /**
+     * Apple first, then Podcast Index results Apple didn't have (when a key
+     * is configured). Either directory failing alone still returns the
+     * other's results; both failing throws.
+     */
+    suspend fun search(term: String, limit: Int = 30): List<SearchResult> {
+        val apple = runCatching { searchApple(term, limit) }
+        val index = if (podcastIndex.enabled) {
+            runCatching { podcastIndex.search(term, limit) }
+        } else {
+            Result.success(emptyList())
+        }
+        if (apple.isFailure && (index.isFailure || !podcastIndex.enabled)) {
+            throw apple.exceptionOrNull()!!
+        }
+        val merged = apple.getOrDefault(emptyList()).toMutableList()
+        val seen = merged.mapTo(HashSet()) { normalize(it.feedUrl) }
+        index.getOrDefault(emptyList()).filterTo(merged) { seen.add(normalize(it.feedUrl)) }
+        return merged
+    }
+
+    private fun normalize(url: String) =
+        url.trim().substringAfter("://").removeSuffix("/").lowercase()
 
     /**
      * Apple's top-podcasts chart. The chart API doesn't include feed URLs,
@@ -88,7 +115,7 @@ class ItunesSearch(private val http: OkHttpClient = Http.api) {
         }.getOrNull()
     }
 
-    suspend fun search(term: String, limit: Int = 30): List<SearchResult> =
+    private suspend fun searchApple(term: String, limit: Int): List<SearchResult> =
         withContext(Dispatchers.IO) {
             val url = "https://itunes.apple.com/search".toHttpUrl().newBuilder()
                 .addQueryParameter("term", term)

@@ -21,6 +21,17 @@ android {
             ?.toInt() ?: 2
         versionName = (project.findProperty("stepcastVersionName") as String?)
             ?: "0.2.0"
+        // Podcast Index directory credentials (optional; empty = off). From
+        // -PpodcastIndexKey/-PpodcastIndexSecret or the environment, e.g.
+        // GitHub secrets PODCASTINDEX_KEY / PODCASTINDEX_SECRET in CI.
+        fun cred(prop: String, env: String): String =
+            ((project.findProperty(prop) as String?) ?: System.getenv(env) ?: "")
+                .replace("\"", "")
+        buildConfigField("String", "PODCASTINDEX_KEY", "\"${cred("podcastIndexKey", "PODCASTINDEX_KEY")}\"")
+        buildConfigField(
+            "String", "PODCASTINDEX_SECRET",
+            "\"${cred("podcastIndexSecret", "PODCASTINDEX_SECRET")}\""
+        )
     }
 
     // Committed convenience key so every CI build (ephemeral runners!) signs
@@ -123,6 +134,12 @@ dependencies {
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.datasource.okhttp)
     implementation(libs.androidx.media3.database)
+    // Chromecast: CastPlayer + the Cast framework (Google Play services)
+    implementation(libs.androidx.media3.cast)
+    // the Cast route dialogs (already pulled in by the Cast framework;
+    // declared so the Cast button can reference them)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.mediarouter)
     implementation(libs.coil.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.guava)

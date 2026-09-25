@@ -15,7 +15,8 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
 
 ## Navigation & app shell
 
-- **Two-tab bottom navigation**: Library and Up Next. Child screens
+- **Two-tab bottom navigation**: Library and Up Next (a side navigation
+  rail instead on tablets, unfolded foldables and wide landscape). Child screens
   (Downloads, History, SmartPlay editor → Up Next; everything else →
   Library) keep their owning tab highlighted, so the bar always shows
   where you are.
@@ -47,6 +48,10 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   lives on shows (see Feeds & refresh).
 - **New episodes card** at the top whenever the inbox is non-empty (see
   Inbox).
+- **Continue listening** row: half-listened episodes, most recently
+  listened first, with progress bars; one tap resumes.
+- A one-time, explained prompt for notification permission once the
+  library has shows (never a cold prompt on first launch).
 - **Needs attention** — an automatic error-tinted section at the very
   bottom listing feeds whose refresh has failed 3+ times in a row (they
   also stay in their normal categories). Failing feeds carry a badge on
@@ -57,16 +62,17 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   RSS URLs, and add-local-folder), refresh-all, Settings.
 - **Multi-select** (long-press tiles) for bulk category assignment.
 - **Unified search** (the header search icon): one always-live field over
-  two tabs — **Library** (default; shows and episodes as you type, full
-  episode-row actions) and **Discover** (directory search as you type,
+  two tabs — **Library** (default; shows and episodes as you type — episode
+  titles first, then **matches in show notes**, full episode-row actions) and **Discover** (directory search as you type,
   top charts while the field is empty). A pasted RSS URL surfaces an
   "open feed preview" row; add-local-folder sits under the field whenever
   it's blank; a no-match library search offers Discover one tap away.
 
 ## Discover & subscribing
 
-- **Discover** (the unified search's second tab): top-charts until you
-  type; directory search as you type, or paste an RSS URL.
+- **Discover** (the unified search's second tab): your country's top
+  charts until you type; directory search as you type (Apple, plus
+  Podcast Index when the build has an API key), or paste an RSS URL.
 - **Preview before subscribing**: tapping any result (or a pasted URL)
   opens a preview — artwork, author, expandable description, the 30
   latest episodes — and every episode **streams right there without
@@ -105,7 +111,18 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   the podcast), chapter row, scrubber with drag preview, transport
   (previous / seek-back / play-pause / seek-forward / next) with haptics.
 - **Utility row**: playback speed (per-show, see below), intro/outro
-  skips, sleep timer, transcript (when available), share-at-timestamp.
+  skips, sleep timer, transcript (when available), **Cast** (when a Cast
+  device is on the network), **bookmarks**, share-at-timestamp.
+- **Bookmarks**: mark the current moment with an optional note; the
+  episode's bookmarks list in the same dialog — tap to jump back, delete.
+  Included in backups.
+- **Chromecast**: casting hands the queue and position to the TV/speaker
+  (episodes stream from their original URLs; local-folder files can't be
+  cast); disconnecting brings playback back to the phone where the TV left
+  off. Notification, widgets and the app follow the switch.
+- **Streaming**: already-streamed audio is cached (150 MB, LRU) so seeking
+  back doesn't re-download; a 3-minute buffer rides out dead zones.
+- **Volume boost** (Settings → Playback, 0–10 dB) for quiet shows.
 - **Chapters**: Podlove Simple Chapters, Podcasting 2.0 JSON chapters, and
   synthetic chapters mined from timestamped tracklists in show notes;
   tick marks on the scrubber, current-chapter title, prev/next chapter,
@@ -126,7 +143,8 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   as a "+90s" chip under the player transport and as an extra media-
   notification button, both only for shows that set one.
 - **Trim silence** (ExoPlayer skipSilenceEnabled, Settings toggle).
-- **Sleep timer**: minutes presets or end-of-episode, volume fade-out in
+- **Sleep timer**: minutes presets or end-of-episode (stops exactly at the
+  episode boundary — the next one never starts), volume fade-out in
   the final stretch, **shake to add 10 minutes**, live countdown badge.
 - **Resume logic**: positions persist continuously; a saved position in
   the last 15 s restarts from 0 instead of "instant-completing"; position
@@ -199,6 +217,10 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   episode downloads instead of streaming.
 - **Storage dashboard** (Settings): downloaded footprint per show,
   one-tap per-show cleanup.
+- **Download storage limit** (GB, 0 = none): played downloads are removed
+  first to make room; unplayed ones never are — a download that still
+  won't fit fails with a reason. **Store downloads on SD card** (new
+  downloads; falls back to phone storage if the card is gone).
 
 ## Feed health & maintenance
 
@@ -213,6 +235,11 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   kept, new episodes merged by guid, failure count reset — with a guard
   against URLs another subscription already uses.
 - **Last refreshed** relative timestamp on every podcast screen.
+- **Moved feeds follow automatically**: a permanent redirect or the feed's
+  own `<itunes:new-feed-url>` updates the subscription URL (never onto one
+  another show already uses).
+- **Conditional refresh**: unchanged feeds answer "not modified" and are
+  skipped entirely — far less data and battery on big libraries.
 - **Hidden diagnostics**: long-press the Settings footer for counts,
   stalest feeds, widget state, active station, crash-file presence — plus
   a **Share journal** button for the playback journal: every position
@@ -272,6 +299,11 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   the New-episodes inbox.
 - Per-show: episode list cap, oldest-first (serials), auto-queue new
   episodes.
+- **Podcasting 2.0 / iTunes extras**: season + episode numbers ("S2 E5")
+  and Trailer/Bonus labels on rows, the people in an episode in its
+  details, and the show's **Support the show** (podcast:funding) link on
+  its screen. Full show notes come from `content:encoded` when a feed has
+  it.
 - Bounded refresh/download concurrency, sized for 300+ feed libraries;
   episode lists page for huge feeds.
 
@@ -319,7 +351,9 @@ still prompt for unlock (they need more than a media key can say).
 - Lock-screen media card and QS media carousel; **playback resumption**
   from the carousel after process death.
 - **Android Auto**: browse tree with Up Next, SmartPlays, categories, and
-  all podcasts.
+  all podcasts; **search**; **voice** ("play <show>" = its next unplayed
+  episode, a SmartPlay by name, or an episode; "play Stepcast" resumes Up
+  Next). Google Assistant on the phone uses the same resolution.
 - Download progress notifications on their own low-importance channel.
 
 ## Automation & integrations
@@ -356,12 +390,24 @@ podcast-scheme URL handling into Discover.
   arrive on later refreshes auto-download normally. (A single subscribe
   from Discover is unchanged — it still fetches the newest episodes.)
 
+## Sync
+
+- **gPodder sync** (Settings → Sync, off by default): gpodder.net or a
+  Nextcloud with the gPodder Sync app. Subscriptions and listening progress
+  sync hourly and on "Sync now" — compatible with AntennaPod, Kasts and
+  other gPodder clients. The first sync only merges (nothing is deleted on
+  either side); progress for episodes this phone hasn't fetched yet lands
+  when that feed refreshes. Credentials are never in cloud backups.
+
 ## Stats & history
 
 - **Listening stats** (Settings): total time listened, time saved by
   speed/silence-trimming, episodes finished, per-show "Most listened",
   resettable.
 - **History screen** (from Up Next): finished episodes, replayable.
+- **Your year in listening** (Settings → Stats): time listened, episodes
+  finished, active days, longest streak, time saved, top shows and a
+  month-by-month strip (tracked per day from schema v24 on).
 
 ## Appearance
 
@@ -375,10 +421,12 @@ podcast-scheme URL handling into Discover.
 
 ## Under the hood (summary)
 
-Kotlin, Compose/M3, Room (schema v16, real migrations from v9), media3
-MediaSessionService, WorkManager, Glance, Coil, OkHttp; minSdk 26 /
-targetSdk 35. Built exclusively by GitHub Actions (`stepcast-latest`
-rolling release); JVM-pure unit tests for parsers/schedule logic. Details
+Kotlin, Compose/M3, Room (schema v24, real migrations from v9, exported
+schemas + migration tests from v22), media3 MediaSessionService + Cast,
+WorkManager, Glance, Coil, OkHttp; minSdk 26 / targetSdk 36. Built exclusively by GitHub Actions (`stepcast-latest`
+rolling release, published from main only); JVM unit tests for
+parsers/schedule logic plus Robolectric tests for migrations, the RSS
+parser, refresh (304/redirects/rekey/restore) and sync. Details
 in [README.md](README.md) and [ENGINEERING_NOTES.md](ENGINEERING_NOTES.md).
 
 ---

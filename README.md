@@ -16,19 +16,24 @@ the binary keystore and changing the references breaks signing.
 - Kotlin + Jetpack Compose (Material 3, dark mode, own "Ink & Signal" theme
   — neon-cyan brand — with accent presets incl. Hot Pink, a custom HSV
   color-wheel accent, and opt-in Material You dynamic color)
-- Room (schema v16, real migrations from v9) for podcasts/episodes/queue/
-  SmartPlays/multi-category memberships/listen stats; Preferences DataStore
-  for settings/stats prefs (migrated from SharedPreferences)
+- Room (schema v24, real migrations from v9; schemas exported from v22 and
+  migration-tested under Robolectric) for podcasts/episodes/queue/
+  SmartPlays/multi-category memberships/listen stats/bookmarks/per-day
+  listening, plus an FTS4 show-notes index; Preferences DataStore for
+  settings/stats prefs (migrated from SharedPreferences)
 - Media3 `MediaLibrarySession` service — pill-matched media notification,
-  playback resumption, Android Auto browse tree, Bluetooth routing
+  playback resumption, Android Auto browse tree + search + voice,
+  Bluetooth routing, Chromecast (CastPlayer handoff), stream cache
 - WorkManager: feed refresh, downloads (foreground notifications), weekly
   auto-backup
 - Glance home-screen widgets (player / bar / mini / 1x1 play button /
   SmartPlays launcher; live state, per-widget + global opacity down to
   fully transparent glyph-only)
-- OkHttp + hand-rolled RSS 2.0/iTunes parser; iTunes Search API + Apple
-  top-charts for discovery; Coil for artwork
-- minSdk 26, targetSdk 35, AGP 8.7 / Kotlin 2.0 — Play-ready toolchain
+- OkHttp + hand-rolled RSS 2.0/iTunes/Podcasting 2.0 parser with
+  conditional (ETag) refresh; iTunes Search API + Apple top-charts (+
+  optional Podcast Index) for discovery; Coil for artwork
+- Optional gPodder API sync (gpodder.net / Nextcloud gPodder Sync)
+- minSdk 26, targetSdk 36, AGP 8.9 / Kotlin 2.0 — Play-ready toolchain
 
 ## Building
 
@@ -164,8 +169,10 @@ deliberately keeps its name; Discover preview with play-before-subscribe)
 + the review-remainder program (New-episodes inbox, Stations, Podcasting
 2.0 transcripts, last-refreshed visibility, hidden diagnostics, first-run
 CTAs, queue clear/triage, SmartPlay-replace undo), all CI-green and in
-daily use on the dev device.** Room is at schema v16 with real migrations
-from v9.
+daily use on the dev device.** Room is at schema v24 with real migrations
+from v9. Review wave 5 (see REVIEW.md) added listening-state backups,
+resumable downloads, conditional refresh, sync, Cast, search in show
+notes, bookmarks and the yearly recap.
 
 First smoke test after an update: subscribe → play → queue → download →
 kill app → resume from the media carousel; then a widget button tap, a

@@ -52,6 +52,7 @@ class StepcastApplication : Application(), coil.ImageLoaderFactory {
             }
         }
         RefreshWorker.schedulePeriodic(this)
+        com.stepcast.app.sync.SyncWorker.schedule(this)
         if (com.stepcast.app.data.AppSettings.autoBackupFolder != null) {
             com.stepcast.app.sync.AutoBackupWorker.schedule(this)
         }

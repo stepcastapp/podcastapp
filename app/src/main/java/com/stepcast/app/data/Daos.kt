@@ -544,6 +544,22 @@ interface EpisodeDao {
     )
     suspend fun notifyCandidates(afterId: Long, sinceMs: Long): List<NotifyCandidate>
 
+    /** Listening that happened after [sinceMs] — gPodder sync upload. */
+    @Query(
+        "SELECT p.feedUrl AS feedUrl, e.audioUrl AS audioUrl, e.guid AS guid, " +
+            "e.positionMs AS positionMs, e.durationMs AS durationMs, e.played AS played, " +
+            "e.lastPlayedMs AS lastPlayedMs, e.playedAtMs AS playedAtMs " +
+            "FROM episodes e INNER JOIN podcasts p ON p.id = e.podcastId " +
+            "WHERE p.localFolderUri IS NULL AND " +
+            "(e.lastPlayedMs > :sinceMs OR e.playedAtMs > :sinceMs)"
+    )
+    suspend fun progressChangedSince(sinceMs: Long): List<SyncProgressRow>
+
+    @Query(
+        "UPDATE episodes SET positionMs = :positionMs, lastPlayedMs = :atMs WHERE id = :id"
+    )
+    suspend fun applySyncedPosition(id: Long, positionMs: Long, atMs: Long)
+
     /** Episodes finished inside a time window (the yearly recap). */
     @Query("SELECT COUNT(*) FROM episodes WHERE played = 1 AND playedAtMs BETWEEN :fromMs AND :toMs")
     suspend fun countPlayedBetween(fromMs: Long, toMs: Long): Int
@@ -861,6 +877,18 @@ data class EpisodeStateRow(
     val playedAtMs: Long,
     val positionMs: Long,
     val favorite: Boolean
+)
+
+/** Projection for [EpisodeDao.progressChangedSince]. */
+data class SyncProgressRow(
+    val feedUrl: String,
+    val audioUrl: String,
+    val guid: String,
+    val positionMs: Long,
+    val durationMs: Long,
+    val played: Boolean,
+    val lastPlayedMs: Long,
+    val playedAtMs: Long
 )
 
 /** Projection for [EpisodeDao.notifyCandidates]. */
