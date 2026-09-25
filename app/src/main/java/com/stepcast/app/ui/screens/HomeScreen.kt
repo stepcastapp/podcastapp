@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -81,7 +82,8 @@ fun HomeScreen(
     onCategoryClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit,
-    onOpenInbox: () -> Unit
+    onOpenInbox: () -> Unit,
+    onPlayEpisode: (com.stepcast.app.data.Episode, com.stepcast.app.data.Podcast?) -> Unit = { _, _ -> }
 ) {
     val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
     val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -274,6 +276,8 @@ fun HomeScreen(
                     }
                 }
             }
+            ContinueListeningRow(repository, podcasts, onPlayEpisode)
+            NotificationPermissionPrompt()
             val refreshingCategories = remember { mutableStateListOf<String>() }
             PodcastGrid(
                 podcasts = podcasts,
@@ -843,4 +847,106 @@ private fun PodcastTile(
             modifier = Modifier.padding(top = 4.dp)
         )
     }
+}
+
+/**
+ * Half-listened episodes, most recently listened first — one tap resumes.
+ * Hidden when there's nothing in progress.
+ */
+@Composable
+private fun ContinueListeningRow(
+    repository: PodcastRepository,
+    podcasts: List<com.stepcast.app.data.Podcast>,
+    onPlay: (com.stepcast.app.data.Episode, com.stepcast.app.data.Podcast?) -> Unit
+) {
+    val inProgress by repository.inProgress.collectAsStateWithLifecycle(initialValue = emptyList())
+    if (inProgress.isEmpty()) return
+    val byId = remember(podcasts) { podcasts.associateBy { it.id } }
+    Text(
+        stringResource(R.string.continue_listening),
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
+    )
+    androidx.compose.foundation.lazy.LazyRow(
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+    ) {
+        items(inProgress.size, key = { inProgress[it].id }) { i ->
+            val ep = inProgress[i]
+            val podcast = byId[ep.podcastId]
+            Column(
+                Modifier
+                    .width(96.dp)
+                    .clickable { onPlay(ep, podcast) }
+            ) {
+                Box {
+                    coil.compose.AsyncImage(
+                        model = ep.imageUrl ?: podcast?.imageUrl,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { ep.progressFraction },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+                Text(
+                    ep.title,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The one explained ask for notification permission: shown once the
+ * library has shows (so "new episodes" means something), only if alerts
+ * are on and the permission is missing, and never again after an answer.
+ */
+@Composable
+private fun NotificationPermissionPrompt() {
+    val context = LocalContext.current
+    var visible by remember {
+        mutableStateOf(
+            com.stepcast.app.data.AppSettings.newEpisodeNotifications &&
+                !com.stepcast.app.ui.NotificationPermission.granted(context) &&
+                !com.stepcast.app.ui.NotificationPermission.asked(context)
+        )
+    }
+    if (!visible) return
+    val request = com.stepcast.app.ui.rememberNotificationPermissionRequest { granted ->
+        if (!granted) com.stepcast.app.data.AppSettings.setNewEpisodeNotifications(context, false)
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = {
+            com.stepcast.app.ui.NotificationPermission.markAsked(context)
+            visible = false
+        },
+        title = { Text(stringResource(R.string.notif_permission_title)) },
+        text = { Text(stringResource(R.string.notif_permission_body)) },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                com.stepcast.app.ui.NotificationPermission.markAsked(context)
+                visible = false
+                request(context)
+            }) { Text(stringResource(R.string.allow)) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                com.stepcast.app.ui.NotificationPermission.markAsked(context)
+                com.stepcast.app.data.AppSettings.setNewEpisodeNotifications(context, false)
+                visible = false
+            }) { Text(stringResource(R.string.not_now)) }
+        }
+    )
 }

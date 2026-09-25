@@ -159,7 +159,9 @@ data class Episode(
     /** itunes:episodeType: "full" (default), "trailer" or "bonus". */
     val episodeType: String? = null,
     /** Podcasting 2.0 <podcast:person> names, " · "-joined; null = none. */
-    val persons: String? = null
+    val persons: String? = null,
+    /** Last time a position was saved while listening; drives "Continue listening". */
+    val lastPlayedMs: Long = 0
 ) {
     val progressFraction: Float
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f

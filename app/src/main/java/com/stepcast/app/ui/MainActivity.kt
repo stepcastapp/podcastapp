@@ -66,6 +66,13 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == ACTION_OPEN_INBOX) openInboxNonce.value++
     }
 
+    /** Assistant: "play <show> on Stepcast". */
+    private fun handlePlayFromSearch(intent: android.content.Intent?) {
+        if (intent?.action != android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return
+        val query = intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty()
+        playerConnection.playFromSearch(query)
+    }
+
     private fun extractFeedUrl(intent: android.content.Intent?): String? {
         intent ?: return null
         return when (intent.action) {
@@ -101,6 +108,7 @@ class MainActivity : ComponentActivity() {
         }
         handleSmartPlayShortcut(intent)
         handleOpenInbox(intent)
+        handlePlayFromSearch(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -121,15 +129,10 @@ class MainActivity : ComponentActivity() {
             handleSmartPlayShortcut(intent)
             handleOpenInbox(intent)
         }
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            registerForActivityResult(
-                androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-            ) { }.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
+        // notification permission is asked in context (see
+        // NotificationPermission), not cold on launch
         playerConnection = PlayerConnection(this, lifecycleScope)
+        if (savedInstanceState == null) handlePlayFromSearch(intent)
         setContent {
             // system bars must follow the APP theme, not the OS theme —
             // otherwise status-bar icons stay dark on our dark background
@@ -338,7 +341,8 @@ fun StepcastApp(
                     },
                     onOpenInbox = {
                         navController.navigate("inbox") { launchSingleTop = true }
-                    }
+                    },
+                    onPlayEpisode = { episode, podcast -> player.play(episode, podcast) }
                 )
             }
             composable("inbox") {

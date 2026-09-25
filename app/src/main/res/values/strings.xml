@@ -620,4 +620,17 @@
         <item quantity="other">Longest streak: %d days</item>
     </plurals>
     <string name="loading">Loading…</string>
+    <string name="volume_boost">Volume boost</string>
+    <string name="decibels">dB</string>
+    <string name="volume_boost_hint">0 = off; up to 10 dB louder for quiet shows, without clipping</string>
+    <string name="continue_listening">Continue listening</string>
+    <string name="notif_permission_title">Know when new episodes land?</string>
+    <string name="notif_permission_body">Stepcast can send a short alert when your shows publish — batched around your Fresh-by times, not after every check. You can change this any time in Settings.</string>
+    <string name="allow">Allow</string>
+    <string name="not_now">Not now</string>
+    <string name="download_storage_limit">Download storage limit</string>
+    <string name="gigabytes">GB</string>
+    <string name="download_storage_limit_hint">0 = no limit. When full, played downloads are removed first; unplayed ones are never deleted to make room</string>
+    <string name="downloads_on_sd_card">Store downloads on SD card</string>
+    <string name="downloads_on_sd_card_hint">New downloads only; existing files stay where they are. Falls back to phone storage if the card is removed</string>
 </resources>

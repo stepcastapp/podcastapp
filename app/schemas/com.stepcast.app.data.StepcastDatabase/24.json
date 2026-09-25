@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 24,
-    "identityHash": "d7916afb52c53362eefeed252b4f370d",
+    "identityHash": "5b7a05eec73c6bad0709ee20bf09aca3",
     "entities": [
       {
         "tableName": "podcasts",
@@ -196,7 +196,7 @@
       },
       {
         "tableName": "episodes",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `podcastId` INTEGER NOT NULL, `guid` TEXT NOT NULL, `title` TEXT NOT NULL, `description` TEXT NOT NULL, `audioUrl` TEXT NOT NULL, `imageUrl` TEXT, `pubDateMs` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, `positionMs` INTEGER NOT NULL, `played` INTEGER NOT NULL, `playedAtMs` INTEGER NOT NULL, `downloadStatus` INTEGER NOT NULL, `downloadProgress` INTEGER NOT NULL, `downloadAttempts` INTEGER NOT NULL, `localFilePath` TEXT, `chapters` TEXT, `transcriptUrl` TEXT, `transcriptType` TEXT, `inboxDismissed` INTEGER NOT NULL, `autoDownloadEligible` INTEGER NOT NULL, `favorite` INTEGER NOT NULL, `sourceFileName` TEXT, `season` INTEGER, `episodeNumber` INTEGER, `episodeType` TEXT, `persons` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `podcastId` INTEGER NOT NULL, `guid` TEXT NOT NULL, `title` TEXT NOT NULL, `description` TEXT NOT NULL, `audioUrl` TEXT NOT NULL, `imageUrl` TEXT, `pubDateMs` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, `positionMs` INTEGER NOT NULL, `played` INTEGER NOT NULL, `playedAtMs` INTEGER NOT NULL, `downloadStatus` INTEGER NOT NULL, `downloadProgress` INTEGER NOT NULL, `downloadAttempts` INTEGER NOT NULL, `localFilePath` TEXT, `chapters` TEXT, `transcriptUrl` TEXT, `transcriptType` TEXT, `inboxDismissed` INTEGER NOT NULL, `autoDownloadEligible` INTEGER NOT NULL, `favorite` INTEGER NOT NULL, `sourceFileName` TEXT, `season` INTEGER, `episodeNumber` INTEGER, `episodeType` TEXT, `persons` TEXT, `lastPlayedMs` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -349,6 +349,12 @@
             "fieldPath": "persons",
             "columnName": "persons",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastPlayedMs",
+            "columnName": "lastPlayedMs",
+            "affinity": "INTEGER",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -780,7 +786,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd7916afb52c53362eefeed252b4f370d')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5b7a05eec73c6bad0709ee20bf09aca3')"
     ]
   }
 }

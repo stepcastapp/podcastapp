@@ -92,6 +92,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var recapOpen by remember { mutableStateOf(false) }
+    val requestNotifications = com.stepcast.app.ui.rememberNotificationPermissionRequest()
     if (recapOpen) {
         RecapDialog(repository = repository, onDismiss = { recapOpen = false })
     }
@@ -526,6 +527,13 @@ fun SettingsScreen(
             checked = AppSettings.adChapterAutoSkip,
             onToggle = { AppSettings.setAdChapterAutoSkip(context, it) }
         )
+        NumberSetting(
+            label = stringResource(R.string.volume_boost),
+            unit = stringResource(R.string.decibels),
+            value = AppSettings.volumeBoostDb,
+            hint = stringResource(R.string.volume_boost_hint),
+            onCommit = { AppSettings.setVolumeBoostDb(context, it) }
+        )
         SwitchSetting(
             label = stringResource(R.string.trim_silence),
             hint = stringResource(R.string.skips_silent_gaps_in_speech_applies_from_t),
@@ -630,7 +638,10 @@ fun SettingsScreen(
             label = stringResource(R.string.new_episode_notifications),
             hint = stringResource(R.string.notify_when_background_refresh_finds_new_e),
             checked = AppSettings.newEpisodeNotifications,
-            onToggle = { AppSettings.setNewEpisodeNotifications(context, it) }
+            onToggle = {
+                AppSettings.setNewEpisodeNotifications(context, it)
+                if (it) requestNotifications(context)
+            }
         )
         if (AppSettings.newEpisodeNotifications) {
             SwitchSetting(
@@ -638,6 +649,23 @@ fun SettingsScreen(
                 hint = stringResource(R.string.notify_only_checkpoints_hint),
                 checked = AppSettings.notifyOnlyAtCheckpoints,
                 onToggle = { AppSettings.setNotifyOnlyAtCheckpoints(context, it) }
+            )
+        }
+        NumberSetting(
+            label = stringResource(R.string.download_storage_limit),
+            unit = stringResource(R.string.gigabytes),
+            value = AppSettings.downloadCapGb,
+            hint = stringResource(R.string.download_storage_limit_hint),
+            onCommit = { AppSettings.setDownloadCapGb(context, it) }
+        )
+        if (com.stepcast.app.download.DownloadStorage.hasRemovable(context) ||
+            AppSettings.downloadsOnSdCard
+        ) {
+            SwitchSetting(
+                label = stringResource(R.string.downloads_on_sd_card),
+                hint = stringResource(R.string.downloads_on_sd_card_hint),
+                checked = AppSettings.downloadsOnSdCard,
+                onToggle = { AppSettings.setDownloadsOnSdCard(context, it) }
             )
         }
         SwitchSetting(

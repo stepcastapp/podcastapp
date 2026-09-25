@@ -121,6 +121,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.datasource.okhttp)
+    implementation(libs.androidx.media3.database)
     implementation(libs.coil.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.guava)

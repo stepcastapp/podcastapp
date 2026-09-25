@@ -243,6 +243,9 @@ object StepcastBackup {
                 .put("notificationDoneButton", AppSettings.notificationDoneButton)
                 .put("categoryRefreshButtons", AppSettings.categoryRefreshButtons)
                 .put("libraryCompactList", AppSettings.libraryCompactList)
+                .put("volumeBoostDb", AppSettings.volumeBoostDb)
+                .put("downloadCapGb", AppSettings.downloadCapGb)
+                .put("allowExternalAutomation", AppSettings.allowExternalAutomation)
         )
         return root
     }
@@ -503,6 +506,11 @@ object StepcastBackup {
                 AppSettings.setCategoryRefreshButtons(context, it)
             }
             boolIf("libraryCompactList") { AppSettings.setLibraryCompactList(context, it) }
+            intIf("volumeBoostDb") { AppSettings.setVolumeBoostDb(context, it) }
+            intIf("downloadCapGb") { AppSettings.setDownloadCapGb(context, it) }
+            boolIf("allowExternalAutomation") {
+                AppSettings.setAllowExternalAutomation(context, it)
+            }
             runCatching {
                 if (s.has("themeMode")) {
                     ThemePrefs.set(context, ThemeMode.valueOf(s.optString("themeMode")))

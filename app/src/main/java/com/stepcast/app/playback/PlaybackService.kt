@@ -135,6 +135,31 @@ class PlaybackService : MediaLibraryService() {
     private var currentAdJumpSec = 0
     private var lastWidgetArtUri: String? = null
 
+    /** Volume boost (Settings); null while off or unsupported. */
+    private var loudness: android.media.audiofx.LoudnessEnhancer? = null
+
+    /**
+     * Quiet shows (field recordings, soft-spoken hosts) next to loud ones:
+     * a LoudnessEnhancer on the player's audio session raises gain without
+     * the clipping a plain volume multiplier would cause.
+     */
+    private fun applyVolumeBoost() {
+        val db = AppSettings.volumeBoostDb
+        val sessionId = exoPlayer?.audioSessionId ?: return
+        if (sessionId == C.AUDIO_SESSION_ID_UNSET) return
+        if (db <= 0) {
+            loudness?.enabled = false
+            return
+        }
+        val effect = loudness ?: runCatching {
+            android.media.audiofx.LoudnessEnhancer(sessionId)
+        }.getOrNull()?.also { loudness = it } ?: return
+        runCatching {
+            effect.setTargetGain(db * 100) // millibels
+            effect.enabled = true
+        }
+    }
+
     /** Why playWhenReady last went false; drives the SmartPlay focus retry. */
     private var lastPlayWhenReadyFalseReason = -1
     private var smartPlayRetryJob: Job? = null
@@ -160,11 +185,19 @@ class PlaybackService : MediaLibraryService() {
             )
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
+            .setMediaSourceFactory(StreamCache.mediaSourceFactory(this))
+            .setLoadControl(StreamCache.loadControl())
             .setSeekBackIncrementMs(AppSettings.seekBackSeconds * 1_000L)
             .setSeekForwardIncrementMs(AppSettings.seekForwardSeconds * 1_000L)
             .build()
         exoPlayer = player
         player.skipSilenceEnabled = AppSettings.skipSilence
+        applyVolumeBoost()
+        // the Settings value is Compose state: follow it live while playing
+        serviceScope.launch {
+            androidx.compose.runtime.snapshotFlow { AppSettings.volumeBoostDb }
+                .collect { applyVolumeBoost() }
+        }
 
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -231,6 +264,13 @@ class PlaybackService : MediaLibraryService() {
                 PlaybackJournal.log(
                     "suppress", suppressionName(playbackSuppressionReason)
                 )
+            }
+
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                // the effect is bound to a session; a new session needs a new one
+                loudness?.release()
+                loudness = null
+                applyVolumeBoost()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -732,6 +772,34 @@ class PlaybackService : MediaLibraryService() {
                 LibraryResult.ofItemList(ImmutableList.copyOf(children), params)
             }
 
+        /** Android Auto's search box / voice "search for …". */
+        override fun onSearch(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<Void>> =
+            serviceScope.future {
+                val count = searchItems(query).size
+                session.notifySearchResultChanged(browser, query, count, params)
+                LibraryResult.ofVoid()
+            }
+
+        override fun onGetSearchResult(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
+            serviceScope.future {
+                val all = searchItems(query)
+                val from = (page * pageSize).coerceAtMost(all.size)
+                val to = (from + pageSize).coerceAtMost(all.size)
+                LibraryResult.ofItemList(ImmutableList.copyOf(all.subList(from, to)), params)
+            }
+
         override fun onGetItem(
             session: MediaLibrarySession,
             browser: MediaSession.ControllerInfo,
@@ -755,8 +823,13 @@ class PlaybackService : MediaLibraryService() {
                 // flatMap: a SmartPlay leaf expands into its whole episode
                 // list; everything else stays one-in-one-out (or drops)
                 mediaItems.flatMap { item ->
+                    val voiceQuery = item.requestMetadata.searchQuery
                     when {
                         item.localConfiguration != null -> listOf(item)
+                        // "Hey Google, play <show> on Stepcast" / Android
+                        // Auto voice: a query instead of an id
+                        item.mediaId.isEmpty() && voiceQuery != null ->
+                            resolveVoiceQuery(voiceQuery)
                         item.mediaId.startsWith(SMARTPLAY_PREFIX) -> {
                             val smartPlay = item.mediaId
                                 .removePrefix(SMARTPLAY_PREFIX).toLongOrNull()
@@ -788,6 +861,76 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
+    }
+
+    /** SmartPlays (playable), shows (browsable), then episodes (playable). */
+    private suspend fun searchItems(query: String): List<MediaItem> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val smartPlays = app.repository.smartPlayList()
+            .filter { it.name.contains(q, ignoreCase = true) }
+            .map { smartPlay ->
+                MediaItem.Builder()
+                    .setMediaId("$SMARTPLAY_PREFIX${smartPlay.id}")
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(smartPlay.name)
+                            .setIsBrowsable(false)
+                            .setIsPlayable(true)
+                            .build()
+                    )
+                    .build()
+            }
+        val (shows, episodes) = app.repository.searchLibrary(q)
+        val showItems = shows.filter { it.subscribed }.map {
+            browsableItem("$PODCAST_PREFIX${it.id}", it.title, it.imageUrl)
+        }
+        val episodeItems = episodes
+            .filter { app.repository.playableUri(it) != null }
+            .take(30)
+            .map { episodeToItem(it) }
+        return smartPlays + showItems + episodeItems
+    }
+
+    /**
+     * A spoken "play …" with no id. Empty = resume Up Next. Otherwise the
+     * best match wins: a SmartPlay by name (it fills the queue), a show by
+     * title (its next unplayed episode, in the show's listening order), or
+     * an episode by title/show notes.
+     */
+    private suspend fun resolveVoiceQuery(query: String): List<MediaItem> {
+        val q = query.trim()
+        PlaybackJournal.log("voice", "query=\"$q\"")
+        if (q.isEmpty()) {
+            return app.repository.queueSnapshot()
+                .filter { app.repository.playableUri(it) != null }
+                .map { episodeToItem(it) }
+        }
+        val smartPlays = app.repository.smartPlayList()
+        (
+            smartPlays.firstOrNull { it.name.equals(q, ignoreCase = true) }
+                ?: smartPlays.firstOrNull { it.name.contains(q, ignoreCase = true) }
+            )?.let { smartPlay ->
+                val episodes = app.repository.episodesFor(smartPlay)
+                    .filter { app.repository.playableUri(it) != null }
+                if (episodes.isNotEmpty()) {
+                    app.repository.replaceQueue(episodes.drop(1).map { it.id })
+                    return episodes.map { episodeToItem(it) }
+                }
+            }
+        val (shows, episodes) = app.repository.searchLibrary(q)
+        val show = shows.filter { it.subscribed }
+            .let { list -> list.firstOrNull { it.title.equals(q, ignoreCase = true) } ?: list.firstOrNull() }
+        if (show != null) {
+            val next = app.repository.episodesNewestFirst(show.id, limit = Int.MAX_VALUE)
+                .filter { !it.played && app.repository.playableUri(it) != null }
+                .let { if (show.sortOldestFirst) it.sortedBy { e -> e.pubDateMs } else it }
+                .firstOrNull()
+            if (next != null) return listOf(episodeToItem(next, show))
+        }
+        return episodes.firstOrNull { app.repository.playableUri(it) != null }
+            ?.let { listOf(episodeToItem(it)) }
+            .orEmpty()
     }
 
     private fun browsableItem(id: String, title: String, artworkUrl: String? = null): MediaItem =
@@ -959,6 +1102,8 @@ class PlaybackService : MediaLibraryService() {
         CoroutineScope(Dispatchers.Default).launch {
             runCatching { updateAllStepcastWidgets(appContext) }
         }
+        loudness?.release()
+        loudness = null
         mediaSession?.run {
             player.release()
             release()

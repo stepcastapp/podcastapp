@@ -30,6 +30,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Assistant: "play <show> on Stepcast" -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <!-- share a feed URL to Stepcast -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

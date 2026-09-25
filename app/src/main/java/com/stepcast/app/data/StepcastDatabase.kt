@@ -259,6 +259,9 @@ abstract class StepcastDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE episodes ADD COLUMN episodeType TEXT")
                 db.execSQL("ALTER TABLE episodes ADD COLUMN persons TEXT")
                 db.execSQL(
+                    "ALTER TABLE episodes ADD COLUMN lastPlayedMs INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS `episodes_fts` USING FTS4(" +
                         "`title` TEXT NOT NULL, `description` TEXT NOT NULL, content=`episodes`)"
                 )

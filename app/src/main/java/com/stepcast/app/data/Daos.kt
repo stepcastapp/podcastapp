@@ -293,6 +293,12 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE audioUrl = :audioUrl LIMIT 1")
     suspend fun getByAudioUrl(audioUrl: String): Episode?
 
+    @Query(
+        "SELECT * FROM episodes WHERE downloadStatus = 2 AND played = 1 " +
+            "ORDER BY playedAtMs ASC"
+    )
+    suspend fun listDownloadedPlayed(): List<Episode>
+
     @Query("SELECT id FROM episodes WHERE downloadStatus = 1")
     suspend fun downloadingIds(): List<Long>
 
@@ -348,8 +354,20 @@ interface EpisodeDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(episodes: List<Episode>): List<Long>
 
-    @Query("UPDATE episodes SET positionMs = :positionMs WHERE id = :id")
-    suspend fun updatePosition(id: Long, positionMs: Long)
+    @Query(
+        "UPDATE episodes SET positionMs = :positionMs, " +
+            "lastPlayedMs = CASE WHEN :positionMs > 0 THEN :nowMs ELSE lastPlayedMs END " +
+            "WHERE id = :id"
+    )
+    suspend fun updatePosition(id: Long, positionMs: Long, nowMs: Long = System.currentTimeMillis())
+
+    /** Half-listened episodes, most recently listened first ("Continue listening"). */
+    @Query(
+        "SELECT e.* FROM episodes e INNER JOIN podcasts p ON p.id = e.podcastId " +
+            "WHERE e.played = 0 AND e.positionMs > 0 " +
+            "ORDER BY e.lastPlayedMs DESC, e.pubDateMs DESC LIMIT 12"
+    )
+    fun observeInProgress(): Flow<List<Episode>>
 
     @Query("UPDATE episodes SET durationMs = :durationMs WHERE id = :id AND durationMs <= 0")
     suspend fun updateDurationIfUnknown(id: Long, durationMs: Long)

@@ -136,12 +136,26 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                 if (!resuming) {
                     if (newValidator != null) validator.writeText(newValidator) else validator.delete()
                 }
+                // the user's storage limit: make room from PLAYED downloads
+                // first; an episode that still won't fit fails with a reason
+                val cap = DownloadStorage.capBytes()
+                if (cap > 0 && total > 0) {
+                    val need = total - startWritten
+                    if (DownloadStorage.usedBytes(applicationContext) + need > cap) {
+                        repository.freeSpaceFromPlayedDownloads(
+                            DownloadStorage.usedBytes(applicationContext) + need - cap
+                        )
+                    }
+                    if (DownloadStorage.usedBytes(applicationContext) + need > cap) {
+                        throw NoRoomException("download storage limit reached")
+                    }
+                }
                 // don't start a download the disk can't hold (keep 200 MB spare)
                 val dir = file.parentFile
                 if (total > 0 && dir != null &&
                     dir.usableSpace < (total - startWritten) + FREE_SPACE_RESERVE
                 ) {
-                    throw IOException("not enough free space for $total bytes")
+                    throw NoRoomException("not enough free space for $total bytes")
                 }
                 // first byte is flowing: 1% moves the row from "Waiting"
                 // to "Downloading" in the downloads screen immediately
@@ -210,7 +224,11 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             // progress this attempt earns more retries — a flaky link that
             // keeps moving forward should finish, not give up after three
             val madeProgress = written > startWritten
-            if (runAttemptCount < 2 || (madeProgress && runAttemptCount < MAX_RESUMING_ATTEMPTS)) {
+            // no room: retrying can't help until the user frees space
+            val retryable = e !is NoRoomException
+            if (retryable &&
+                (runAttemptCount < 2 || (madeProgress && runAttemptCount < MAX_RESUMING_ATTEMPTS))
+            ) {
                 Result.retry()
             } else {
                 part.delete()
@@ -322,8 +340,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         private val http: OkHttpClient get() = com.stepcast.app.data.Http.downloads
 
         private fun fileFor(context: Context, episode: Episode): File {
-            val dir = File(context.getExternalFilesDir(null), "episodes")
-            dir.mkdirs()
+            val dir = DownloadStorage.dir(context)
             // extension from the LAST PATH SEGMENT only — substringAfterLast('.')
             // on the whole URL turns an extension-less enclosure
             // (…example.com/stream) into "com/stream" and the '/' makes the
@@ -415,8 +432,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             // sweep audio files whose episode ROW is gone (deleted feed,
             // pruned episode): nothing references them, they just eat storage
             runCatching {
-                val dir = File(context.getExternalFilesDir(null), "episodes")
-                for (f in dir.listFiles().orEmpty()) {
+                for (f in DownloadStorage.allDirs(context).flatMap { it.listFiles().orEmpty().toList() }) {
                     if (!f.isFile || !f.name.startsWith("episode-")) continue
                     val id = f.name
                         .removePrefix("episode-")
@@ -432,9 +448,9 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             WorkManager.getInstance(context).cancelUniqueWork(workName(episodeId))
             // belt and braces: a worker that was still queued never runs its
             // cancellation handler, so its old partial would linger
-            File(context.getExternalFilesDir(null), "episodes").listFiles()
-                ?.filter { it.name.startsWith("episode-$episodeId.") && it.name.contains(".part") }
-                ?.forEach { it.delete() }
+            DownloadStorage.allDirs(context).flatMap { it.listFiles().orEmpty().toList() }
+                .filter { it.name.startsWith("episode-$episodeId.") && it.name.contains(".part") }
+                .forEach { it.delete() }
             val app = context.applicationContext as StepcastApplication
             CoroutineScope(Dispatchers.IO).launch {
                 app.repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_NONE)
@@ -442,3 +458,6 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         }
     }
 }
+
+/** Storage limit or disk full — terminal for this attempt, never retried. */
+private class NoRoomException(message: String) : IOException(message)

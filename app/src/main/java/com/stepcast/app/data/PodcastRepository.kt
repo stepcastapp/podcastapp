@@ -1000,6 +1000,9 @@ class PodcastRepository(
     val queue = db.queueDao().observeQueue().shared()
 
     /** Running + failed downloads, for the download-activity dialog. */
+    /** "Continue listening" on the Library. */
+    val inProgress = db.episodeDao().observeInProgress().shared()
+
     val downloadActivity = db.episodeDao().observeDownloadActivity().shared()
 
     suspend fun downloadingIds(): List<Long> = db.episodeDao().downloadingIds()
@@ -1379,6 +1382,23 @@ class PodcastRepository(
                 if (count > 0) add(StorageUsage(podcast, count, bytes))
             }
         }.sortedByDescending { it.bytes }
+    }
+
+    /**
+     * Storage limit: deletes downloads of PLAYED episodes, oldest-played
+     * first, until [bytes] are freed (or nothing played is left). Unplayed
+     * downloads are never touched to make room.
+     */
+    suspend fun freeSpaceFromPlayedDownloads(bytes: Long) = withContext(Dispatchers.IO) {
+        var freed = 0L
+        val candidates = db.episodeDao().listDownloadedPlayed()
+        for (ep in candidates) {
+            if (freed >= bytes) break
+            val size = ep.localFilePath?.let { File(it).length() } ?: 0L
+            deleteDownload(ep.id)
+            freed += size
+        }
+        freed
     }
 
     /** Deletes every downloaded file for one podcast. */
