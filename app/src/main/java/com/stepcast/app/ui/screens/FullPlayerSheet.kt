@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.HourglassTop
@@ -48,7 +50,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,7 +90,7 @@ fun FullPlayerSheet(
     onOpenPodcast: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val progress by player.progress.collectAsState()
+    val progress by player.progress.collectAsStateWithLifecycle()
     val view = androidx.compose.ui.platform.LocalView.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var sleepDialogOpen by remember { mutableStateOf(false) }
@@ -97,6 +98,7 @@ fun FullPlayerSheet(
     var notesOpen by remember { mutableStateOf(false) }
     var skipsOpen by remember { mutableStateOf(false) }
     var transcriptOpen by remember { mutableStateOf(false) }
+    var bookmarksOpen by remember { mutableStateOf(false) }
 
     // the playing episode + its podcast, for notes / feed / skip settings
     var episode by remember {
@@ -430,7 +432,9 @@ fun FullPlayerSheet(
             // name; the speed chips fold into a dialog behind the readout)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
+                // evenly spread, no fixed gaps: six buttons (speed, skips,
+                // sleep, transcript, bookmarks, share) must fit a 360dp phone
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 var speedOpen by remember { mutableStateOf(false) }
@@ -520,7 +524,6 @@ fun FullPlayerSheet(
                         }
                     )
                 }
-                Spacer(Modifier.width(20.dp))
                 IconButton(
                     onClick = { skipsOpen = true },
                     enabled = podcast != null
@@ -538,7 +541,6 @@ fun FullPlayerSheet(
                         }
                     )
                 }
-                Spacer(Modifier.width(20.dp))
                 IconButton(onClick = { sleepDialogOpen = true }) {
                     val sleepArmed = state.sleepEndsAtMs != null || state.sleepAtEpisodeEnd
                     androidx.compose.material3.BadgedBox(badge = {
@@ -567,7 +569,6 @@ fun FullPlayerSheet(
                     }
                 }
                 if (episode?.transcriptUrl != null) {
-                    Spacer(Modifier.width(20.dp))
                     IconButton(onClick = { transcriptOpen = true }) {
                         Icon(
                             Icons.Rounded.Subtitles,
@@ -576,7 +577,15 @@ fun FullPlayerSheet(
                         )
                     }
                 }
-                Spacer(Modifier.width(20.dp))
+                // only present when a Cast device is on the network
+                CastButton()
+                IconButton(onClick = { bookmarksOpen = true }, enabled = episode != null) {
+                    Icon(
+                        Icons.Rounded.BookmarkAdd,
+                        contentDescription = stringResource(R.string.bookmarks),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 val context = androidx.compose.ui.platform.LocalContext.current
                 IconButton(
                     onClick = {
@@ -709,7 +718,7 @@ fun FullPlayerSheet(
                             dialogContext.sendBroadcast(
                                 android.content.Intent(
                                     dialogContext,
-                                    com.stepcast.app.playback.CommandReceiver::class.java
+                                    com.stepcast.app.playback.InternalCommandReceiver::class.java
                                 ).setAction(
                                     com.stepcast.app.playback.CommandReceiver
                                         .ACTION_REFRESH_NOTIF_BUTTONS
@@ -721,6 +730,18 @@ fun FullPlayerSheet(
                 dismissButton = {
                     TextButton(onClick = { skipsOpen = false }) { Text(stringResource(R.string.cancel)) }
                 }
+            )
+        }
+    }
+
+    if (bookmarksOpen) {
+        episode?.let { ep ->
+            BookmarksDialog(
+                episode = ep,
+                repository = repository,
+                currentPositionMs = progress.positionMs,
+                onSeek = { player.seekTo(it) },
+                onDismiss = { bookmarksOpen = false }
             )
         }
     }

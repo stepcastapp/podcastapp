@@ -212,3 +212,58 @@ isn't guaranteed; dismiss-undo doesn't restore auto-download eligibility;
 local-folder SmartPlay rules dropped from backups (URI not portable);
 AutoBackupWorker retries permanent failures forever; notification-id
 collision above 100k episode ids (cosmetic).
+
+## Wave 5 — full re-review (September 2026)
+
+Fresh cover-to-cover read after waves 1–4; everything below landed on
+`claude/app-review-recommendations-4d5zmr`. The app was built and unit-
+tested locally for the first time (the environment could reach Google
+Maven), so each commit compiled, passed tests and passed R8 before push —
+but **none of it has been verified on a device yet** (see TESTING.md).
+
+Critical:
+- [x] Backup had no listening state (played/positions/favorites/History/
+      Up Next/saved episodes/stats) — the sideload→Play migration would
+      reset everything to unplayed. Backup v3 + staged restore.
+- [x] New-episode notifications with only-at-checkpoints (default) dropped
+      every episode found off-checkpoint. Watermark-based batching.
+- [x] Background downloads can't go foreground on 12+, get stopped at
+      10 min, and restarted from byte 0 forever. Resumable (.part + Range/
+      If-Range), expedited for user taps, free-space check.
+- [x] Exported CommandReceiver / media session let any app mark played +
+      delete downloads and browse the library. Opt-in toggle; internal
+      receiver; limited controllers.
+- [x] Inbox count window frozen at process start.
+- [x] Cloud backup restored ID-bearing prefs without the DB. Excluded;
+      device-bound settings cleared after a cloud restore.
+- [x] Play Console FGS declaration missing from PLAY_READINESS.
+
+Optimizations:
+- [x] Every position save re-ran every episodes query (no distinct, flows
+      rebuilt per recomposition, collectAsState in background, no
+      indexes). Shared flows + lifecycle collection + v23 indexes.
+- [x] No conditional GET. ETag/Last-Modified, 304 skips parse. (The
+      "rewrites unchanged rows" half was wrong — updateEpisodeMeta was
+      already guarded.)
+- [x] Full-size artwork decodes (largeHeap). Bounded; largeHeap removed.
+- [x] Sleep end-of-episode audibly started the next episode.
+- [x] Moved feeds (301/308, itunes:new-feed-url) never adopted.
+- [x] Parser: content:encoded, cached date formats, fractional durations.
+- [x] Queue drag → Reorderable library.
+- [x] CI published branch builds as the daily driver; no parser/rekey/
+      migration tests; old dependencies; no profileinstaller.
+
+Features: show-notes search (FTS4), bookmarks, yearly recap, Podcasting
+2.0 extras (season/episode/type/person/funding), stream cache + bigger
+buffer, volume boost, Android Auto search + voice + Assistant, Continue
+listening, localized charts, contextual notification permission, storage
+limit + SD card, navigation rail on wide screens, Chromecast, Podcast
+Index (needs PODCASTINDEX_KEY/SECRET secrets), gPodder/Nextcloud sync,
+cloud library snapshot with one-tap restore.
+
+Deliberately not done:
+- Episode list projections without `description` (EpisodeRow/details read
+  it from the list item; after the churn fixes the payoff is small).
+- Podcasting 2.0 soundbites (rarely published; no natural UI yet).
+- Latest-everything dependency jump (Compose 2026.x / Room 2.8 / Media3
+  1.11 want newer Kotlin/AGP) — took a tested middle step instead.

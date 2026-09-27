@@ -44,7 +44,11 @@ import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.core.graphics.drawable.toBitmap
 import java.io.File
+
+/** Longest edge of artwork handed to the system media surfaces and widgets. */
+private const val SYSTEM_ART_PX = 720
 
 /**
  * Hands MediaSession/notification artwork lookups to Coil's shared
@@ -77,11 +81,16 @@ private class CoilBitmapLoader(
                 // this bitmap crosses into the system UI process — a
                 // HARDWARE bitmap can't be parcelled across that boundary
                 .allowHardware(false)
+                // podcast art is typically 3000x3000: decoded at full size
+                // that's ~36 MB per load, for a card that shows a few
+                // hundred pixels (the framework scales it down anyway)
+                .size(SYSTEM_ART_PX)
                 .build()
             val result = coil.Coil.imageLoader(context).execute(request)
             val drawable = (result as? coil.request.SuccessResult)?.drawable
                 ?: throw java.io.IOException("Coil failed to load artwork: $uri")
-            (drawable as android.graphics.drawable.BitmapDrawable).bitmap
+            (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                ?: drawable.toBitmap()
         }
 }
 
@@ -126,6 +135,101 @@ class PlaybackService : MediaLibraryService() {
     private var currentAdJumpSec = 0
     private var lastWidgetArtUri: String? = null
 
+    // ---- Chromecast -----------------------------------------------------
+
+    private var playerListener: Player.Listener? = null
+    private var castPlayer: androidx.media3.cast.CastPlayer? = null
+
+    /**
+     * When a Cast session starts, the session's player switches from
+     * ExoPlayer to a CastPlayer carrying the same queue and position (from
+     * each episode's ORIGINAL URL — a receiver can't read the phone's
+     * downloads); when it ends, playback comes back to the phone where the
+     * TV left off. Everything above (notification, widgets, Auto, the app)
+     * talks to the MediaSession, so it follows the switch. No-op without
+     * Google Play services.
+     */
+    private fun setUpCast() {
+        val castContext = CastSupport.castContext(this) ?: return
+        val cast = runCatching { androidx.media3.cast.CastPlayer(castContext) }.getOrNull() ?: return
+        castPlayer = cast
+        playerListener?.let { cast.addListener(it) }
+        cast.setSessionAvailabilityListener(object : androidx.media3.cast.SessionAvailabilityListener {
+            override fun onCastSessionAvailable() {
+                val from = exoPlayer ?: return
+                handOff(from, cast, toCast = true)
+            }
+
+            override fun onCastSessionUnavailable() {
+                val to = exoPlayer ?: return
+                handOff(cast, to, toCast = false)
+            }
+        })
+        if (cast.isCastSessionAvailable) exoPlayer?.let { handOff(it, cast, toCast = true) }
+    }
+
+    private fun handOff(from: Player, to: Player, toCast: Boolean) {
+        val ids = (0 until from.mediaItemCount).map { from.getMediaItemAt(it).mediaId }
+        val index = from.currentMediaItemIndex
+        val position = from.currentPosition.coerceAtLeast(0)
+        val playWhenReady = from.playWhenReady
+        persistPosition(if (toCast) "cast-start" else "cast-end")
+        from.pause()
+        PlaybackJournal.log(
+            "cast", "${if (toCast) "to TV" else "back to phone"} items=${ids.size} idx=$index pos=$position"
+        )
+        serviceScope.launch {
+            val items = ArrayList<MediaItem>()
+            var newIndex = 0
+            for ((i, id) in ids.withIndex()) {
+                val episode = id.toLongOrNull()?.takeIf { it > 0 }
+                    ?.let { app.repository.episode(it) } ?: continue
+                val podcast = app.repository.podcast(episode.podcastId)
+                val item = if (toCast) {
+                    CastSupport.castItem(episode, podcast?.title, podcast?.imageUrl)
+                } else {
+                    app.repository.playableUri(episode)?.let { episodeToItem(episode, podcast) }
+                } ?: continue
+                if (i == index) newIndex = items.size
+                items += item
+            }
+            from.stop()
+            from.clearMediaItems()
+            if (items.isNotEmpty()) {
+                to.setMediaItems(items, newIndex, position)
+                to.prepare()
+                to.playWhenReady = playWhenReady
+            }
+            mediaSession?.player = to
+            publishWidgetState()
+        }
+    }
+
+    /** Volume boost (Settings); null while off or unsupported. */
+    private var loudness: android.media.audiofx.LoudnessEnhancer? = null
+
+    /**
+     * Quiet shows (field recordings, soft-spoken hosts) next to loud ones:
+     * a LoudnessEnhancer on the player's audio session raises gain without
+     * the clipping a plain volume multiplier would cause.
+     */
+    private fun applyVolumeBoost() {
+        val db = AppSettings.volumeBoostDb
+        val sessionId = exoPlayer?.audioSessionId ?: return
+        if (sessionId == C.AUDIO_SESSION_ID_UNSET) return
+        if (db <= 0) {
+            loudness?.enabled = false
+            return
+        }
+        val effect = loudness ?: runCatching {
+            android.media.audiofx.LoudnessEnhancer(sessionId)
+        }.getOrNull()?.also { loudness = it } ?: return
+        runCatching {
+            effect.setTargetGain(db * 100) // millibels
+            effect.enabled = true
+        }
+    }
+
     /** Why playWhenReady last went false; drives the SmartPlay focus retry. */
     private var lastPlayWhenReadyFalseReason = -1
     private var smartPlayRetryJob: Job? = null
@@ -151,13 +255,21 @@ class PlaybackService : MediaLibraryService() {
             )
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
+            .setMediaSourceFactory(StreamCache.mediaSourceFactory(this))
+            .setLoadControl(StreamCache.loadControl())
             .setSeekBackIncrementMs(AppSettings.seekBackSeconds * 1_000L)
             .setSeekForwardIncrementMs(AppSettings.seekForwardSeconds * 1_000L)
             .build()
         exoPlayer = player
         player.skipSilenceEnabled = AppSettings.skipSilence
+        applyVolumeBoost()
+        // the Settings value is Compose state: follow it live while playing
+        serviceScope.launch {
+            androidx.compose.runtime.snapshotFlow { AppSettings.volumeBoostDb }
+                .collect { applyVolumeBoost() }
+        }
 
-        player.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 publishWidgetState()
                 mediaItem ?: return
@@ -194,6 +306,21 @@ class PlaybackService : MediaLibraryService() {
                 // indistinguishable from isPlaying alone, and retrying over a
                 // deliberate pause would be a bug, not a fix
                 if (!playWhenReady) lastPlayWhenReadyFalseReason = reason
+                if (!playWhenReady &&
+                    reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
+                    sleepAtEpisodeEnd
+                ) {
+                    // the end-of-episode sleep fired: one-shot, and the
+                    // finished episode counts as played NOW (the transition
+                    // that normally marks it only happens on the next play)
+                    sleepAtEpisodeEnd = false
+                    player.pauseAtEndOfMediaItems = false
+                    currentEpisodeId()?.takeIf { it > 0 }?.let { id ->
+                        serviceScope.launch(Dispatchers.IO) {
+                            app.repository.markPlayed(id, "sleep-eoe")
+                        }
+                    }
+                }
                 PlaybackJournal.log(
                     "pwr",
                     "value=$playWhenReady reason=${pwrReasonName(reason)} " +
@@ -207,6 +334,13 @@ class PlaybackService : MediaLibraryService() {
                 PlaybackJournal.log(
                     "suppress", suppressionName(playbackSuppressionReason)
                 )
+            }
+
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                // the effect is bound to a session; a new session needs a new one
+                loudness?.release()
+                loudness = null
+                applyVolumeBoost()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -238,7 +372,9 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
-        })
+        }
+        playerListener = listener
+        player.addListener(listener)
 
         // tapping the media notification opens the app
         val sessionActivity = PendingIntent.getActivity(
@@ -259,6 +395,8 @@ class PlaybackService : MediaLibraryService() {
             // instead of Media3's minimal one.
             .setBitmapLoader(CoilBitmapLoader(this, serviceScope))
             .build()
+
+        setUpCast()
 
         // brand the status-bar icon with the stairstep silhouette
         setMediaNotificationProvider(
@@ -491,6 +629,23 @@ class PlaybackService : MediaLibraryService() {
                     .setMediaButtonPreferences(mediaNotificationButtons())
                     .build()
             }
+            // Browsing the library and Stepcast's custom commands (Done =
+            // mark played + delete) are for the system, Android Auto, this
+            // app, and — when the user opted in — automation apps. Anything
+            // else connecting gets ordinary transport control only.
+            val privileged = controller.packageName == packageName ||
+                controller.isTrusted ||
+                session.isAutoCompanionController(controller) ||
+                session.isAutomotiveController(controller) ||
+                AppSettings.allowExternalAutomation
+            if (!privileged) {
+                PlaybackJournal.log("connect", "limited controller=${controller.packageName}")
+                return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                    .setAvailableSessionCommands(
+                        MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                    )
+                    .build()
+            }
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(sessionCommands)
                 .build()
@@ -691,6 +846,34 @@ class PlaybackService : MediaLibraryService() {
                 LibraryResult.ofItemList(ImmutableList.copyOf(children), params)
             }
 
+        /** Android Auto's search box / voice "search for …". */
+        override fun onSearch(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<Void>> =
+            serviceScope.future {
+                val count = searchItems(query).size
+                session.notifySearchResultChanged(browser, query, count, params)
+                LibraryResult.ofVoid()
+            }
+
+        override fun onGetSearchResult(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
+            serviceScope.future {
+                val all = searchItems(query)
+                val from = (page * pageSize).coerceAtMost(all.size)
+                val to = (from + pageSize).coerceAtMost(all.size)
+                LibraryResult.ofItemList(ImmutableList.copyOf(all.subList(from, to)), params)
+            }
+
         override fun onGetItem(
             session: MediaLibrarySession,
             browser: MediaSession.ControllerInfo,
@@ -714,8 +897,23 @@ class PlaybackService : MediaLibraryService() {
                 // flatMap: a SmartPlay leaf expands into its whole episode
                 // list; everything else stays one-in-one-out (or drops)
                 mediaItems.flatMap { item ->
+                    val voiceQuery = item.requestMetadata.searchQuery
+                    val casting = castPlayer != null && mediaSession?.player === castPlayer
                     when {
+                        // while casting, items built for the PHONE (downloads
+                        // = file://) must become the receiver-readable URL
+                        casting && item.mediaId.toLongOrNull() != null -> {
+                            val episode = app.repository.episode(item.mediaId.toLong())
+                            val podcast = episode?.let { app.repository.podcast(it.podcastId) }
+                            listOfNotNull(
+                                episode?.let { CastSupport.castItem(it, podcast?.title, podcast?.imageUrl) }
+                            )
+                        }
                         item.localConfiguration != null -> listOf(item)
+                        // "Hey Google, play <show> on Stepcast" / Android
+                        // Auto voice: a query instead of an id
+                        item.mediaId.isEmpty() && voiceQuery != null ->
+                            resolveVoiceQuery(voiceQuery)
                         item.mediaId.startsWith(SMARTPLAY_PREFIX) -> {
                             val smartPlay = item.mediaId
                                 .removePrefix(SMARTPLAY_PREFIX).toLongOrNull()
@@ -747,6 +945,76 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
+    }
+
+    /** SmartPlays (playable), shows (browsable), then episodes (playable). */
+    private suspend fun searchItems(query: String): List<MediaItem> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val smartPlays = app.repository.smartPlayList()
+            .filter { it.name.contains(q, ignoreCase = true) }
+            .map { smartPlay ->
+                MediaItem.Builder()
+                    .setMediaId("$SMARTPLAY_PREFIX${smartPlay.id}")
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(smartPlay.name)
+                            .setIsBrowsable(false)
+                            .setIsPlayable(true)
+                            .build()
+                    )
+                    .build()
+            }
+        val (shows, episodes) = app.repository.searchLibrary(q)
+        val showItems = shows.filter { it.subscribed }.map {
+            browsableItem("$PODCAST_PREFIX${it.id}", it.title, it.imageUrl)
+        }
+        val episodeItems = episodes
+            .filter { app.repository.playableUri(it) != null }
+            .take(30)
+            .map { episodeToItem(it) }
+        return smartPlays + showItems + episodeItems
+    }
+
+    /**
+     * A spoken "play …" with no id. Empty = resume Up Next. Otherwise the
+     * best match wins: a SmartPlay by name (it fills the queue), a show by
+     * title (its next unplayed episode, in the show's listening order), or
+     * an episode by title/show notes.
+     */
+    private suspend fun resolveVoiceQuery(query: String): List<MediaItem> {
+        val q = query.trim()
+        PlaybackJournal.log("voice", "query=\"$q\"")
+        if (q.isEmpty()) {
+            return app.repository.queueSnapshot()
+                .filter { app.repository.playableUri(it) != null }
+                .map { episodeToItem(it) }
+        }
+        val smartPlays = app.repository.smartPlayList()
+        (
+            smartPlays.firstOrNull { it.name.equals(q, ignoreCase = true) }
+                ?: smartPlays.firstOrNull { it.name.contains(q, ignoreCase = true) }
+            )?.let { smartPlay ->
+                val episodes = app.repository.episodesFor(smartPlay)
+                    .filter { app.repository.playableUri(it) != null }
+                if (episodes.isNotEmpty()) {
+                    app.repository.replaceQueue(episodes.drop(1).map { it.id })
+                    return episodes.map { episodeToItem(it) }
+                }
+            }
+        val (shows, episodes) = app.repository.searchLibrary(q)
+        val show = shows.filter { it.subscribed }
+            .let { list -> list.firstOrNull { it.title.equals(q, ignoreCase = true) } ?: list.firstOrNull() }
+        if (show != null) {
+            val next = app.repository.episodesNewestFirst(show.id, limit = Int.MAX_VALUE)
+                .filter { !it.played && app.repository.playableUri(it) != null }
+                .let { if (show.sortOldestFirst) it.sortedBy { e -> e.pubDateMs } else it }
+                .firstOrNull()
+            if (next != null) return listOf(episodeToItem(next, show))
+        }
+        return episodes.firstOrNull { app.repository.playableUri(it) != null }
+            ?.let { listOf(episodeToItem(it)) }
+            .orEmpty()
     }
 
     private fun browsableItem(id: String, title: String, artworkUrl: String? = null): MediaItem =
@@ -791,6 +1059,10 @@ class PlaybackService : MediaLibraryService() {
     /** minutes > 0 arms a countdown; endOfEpisode pauses after the current one; both zero/false cancels. */
     private fun setSleepTimer(minutes: Int, endOfEpisode: Boolean) {
         sleepAtEpisodeEnd = endOfEpisode
+        // ExoPlayer stops AT the item boundary itself. The old way paused
+        // from onEpisodeStarted — after several DB round trips, while the
+        // NEXT episode was already audibly playing at bedtime.
+        exoPlayer?.pauseAtEndOfMediaItems = endOfEpisode
         if (minutes > 0) {
             armSleepMillis(minutes * 60_000L)
         } else {
@@ -914,8 +1186,16 @@ class PlaybackService : MediaLibraryService() {
         CoroutineScope(Dispatchers.Default).launch {
             runCatching { updateAllStepcastWidgets(appContext) }
         }
+        loudness?.release()
+        loudness = null
+        // both players, whichever one the session currently holds — each
+        // exactly once
+        exoPlayer?.release()
+        exoPlayer = null
+        castPlayer?.setSessionAvailabilityListener(null)
+        castPlayer?.release()
+        castPlayer = null
         mediaSession?.run {
-            player.release()
             release()
             mediaSession = null
         }
@@ -1063,35 +1343,19 @@ class PlaybackService : MediaLibraryService() {
             val prefs = getSharedPreferences(StepcastWidget.PREFS, MODE_PRIVATE)
             val artFile = File(cacheDir, "widget_art.png")
             val ok = uri != null && runCatching {
-                val input = if (uri.startsWith("content:") || uri.startsWith("file:")) {
-                    contentResolver.openInputStream(Uri.parse(uri))
-                } else {
-                    // bounded fetch: a slow art host must not pin this
-                    // coroutine forever, and a huge image must not be
-                    // buffered whole into memory
-                    (java.net.URL(uri).openConnection() as java.net.HttpURLConnection)
-                        .apply {
-                            connectTimeout = 10_000
-                            readTimeout = 15_000
-                        }
-                        .inputStream
-                } ?: return@runCatching false
-                val raw = input.use { stream ->
-                    val cap = 8 * 1024 * 1024
-                    val bytes = stream.readBytes()
-                    if (bytes.size > cap) return@runCatching false
-                    bytes
-                }
-                val bounds = android.graphics.BitmapFactory.Options()
-                    .apply { inJustDecodeBounds = true }
-                android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
-                var sample = 1
-                while (bounds.outWidth / (sample * 2) >= 512) sample *= 2
-                val opts = android.graphics.BitmapFactory.Options()
-                    .apply { inSampleSize = sample }
-                val bitmap =
-                    android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
-                        ?: return@runCatching false
+                // Coil: shared disk/memory cache (usually an instant hit —
+                // the player already showed this art), bounded decode size,
+                // and content:/file:/https alike. The old hand-rolled fetch
+                // buffered the WHOLE image before its size check.
+                val request = coil.request.ImageRequest.Builder(this@PlaybackService)
+                    .data(uri)
+                    .allowHardware(false)
+                    .size(WIDGET_ART_PX)
+                    .build()
+                val drawable = (coil.Coil.imageLoader(this@PlaybackService).execute(request)
+                    as? coil.request.SuccessResult)?.drawable ?: return@runCatching false
+                val bitmap = (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                    ?: drawable.toBitmap()
                 // write-then-rename: widgets decode this path concurrently,
                 // and a torn half-written file decodes to null (art flicker)
                 val tmp = File(cacheDir, "widget_art.tmp")
@@ -1114,6 +1378,7 @@ class PlaybackService : MediaLibraryService() {
         if (tickerJob?.isActive == true) return
         tickerJob = serviceScope.launch {
             var saveCountdown = SAVE_EVERY_TICKS
+            var statsCountdown = STATS_EVERY_TICKS
             var widgetCountdown = WIDGET_EVERY_TICKS
             while (isActive) {
                 delay(TICK_MS)
@@ -1123,6 +1388,9 @@ class PlaybackService : MediaLibraryService() {
                 if (--saveCountdown <= 0) {
                     saveCountdown = SAVE_EVERY_TICKS
                     persistPosition()
+                }
+                if (--statsCountdown <= 0) {
+                    statsCountdown = STATS_EVERY_TICKS
                     flushStats()
                 }
                 if (--widgetCountdown <= 0) {
@@ -1295,10 +1563,6 @@ class PlaybackService : MediaLibraryService() {
             previousId != null && previousId > 0 && previousId != episodeId
         ) {
             app.repository.markPlayed(previousId, "auto-adv")
-            if (sleepAtEpisodeEnd) {
-                sleepAtEpisodeEnd = false
-                mediaSession?.player?.pause()
-            }
         }
 
         app.repository.removeFromQueue(episodeId)
@@ -1536,6 +1800,9 @@ class PlaybackService : MediaLibraryService() {
 
     companion object {
         private const val TICK_MS = 1_000L
+        private const val WIDGET_ART_PX = 512
+        /** Listening stats rewrite a DataStore file — once a minute is plenty. */
+        private const val STATS_EVERY_TICKS = 60
         private const val SAVE_EVERY_TICKS = 5
         private const val WIDGET_EVERY_TICKS = 30
 

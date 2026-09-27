@@ -90,6 +90,10 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
             })
             refreshChaptersIfNeeded()
             pushState()
+            pendingVoiceQuery?.let {
+                pendingVoiceQuery = null
+                playFromSearch(it)
+            }
             startQueueSync()
             maybeRestoreInterrupted()
             // position ticker while the UI is alive — only touches progress,
@@ -414,6 +418,29 @@ class PlayerConnection(context: Context, private val scope: CoroutineScope) {
         c.seekTo((c.currentPosition + deltaMs).coerceAtLeast(0))
     }
     fun seekTo(positionMs: Long) = controller?.seekTo(positionMs)
+
+    private var pendingVoiceQuery: String? = null
+
+    /**
+     * Assistant "play … on Stepcast" (MEDIA_PLAY_FROM_SEARCH). The service
+     * resolves the query in onAddMediaItems; an empty query resumes Up Next.
+     */
+    fun playFromSearch(query: String) {
+        val c = controller
+        if (c == null) {
+            pendingVoiceQuery = query // controller still connecting
+            return
+        }
+        c.setMediaItem(
+            MediaItem.Builder()
+                .setRequestMetadata(
+                    MediaItem.RequestMetadata.Builder().setSearchQuery(query).build()
+                )
+                .build()
+        )
+        c.prepare()
+        c.play()
+    }
     fun skipToNext() = controller?.seekToNextMediaItem()
     fun skipToPrevious() = controller?.seekToPreviousMediaItem()
 

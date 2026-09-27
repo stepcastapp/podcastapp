@@ -11,7 +11,12 @@ data class ParsedFeed(
     val description: String,
     val imageUrl: String?,
     val author: String,
-    val episodes: List<ParsedEpisode>
+    val episodes: List<ParsedEpisode>,
+    /** <itunes:new-feed-url>: the publisher says the feed now lives here. */
+    val newFeedUrl: String? = null,
+    /** Podcasting 2.0 <podcast:funding url="…">label</podcast:funding>. */
+    val fundingUrl: String? = null,
+    val fundingLabel: String? = null
 )
 
 data class ParsedEpisode(
@@ -26,7 +31,13 @@ data class ParsedEpisode(
     val chapters: String? = null,
     /** Podcasting 2.0 <podcast:transcript>; best-supported format wins. */
     val transcriptUrl: String? = null,
-    val transcriptType: String? = null
+    val transcriptType: String? = null,
+    val season: Int? = null,
+    val episodeNumber: Int? = null,
+    /** "full" / "trailer" / "bonus" (itunes:episodeType); null = not stated. */
+    val episodeType: String? = null,
+    /** <podcast:person> names, " · "-joined. */
+    val persons: String? = null
 )
 
 /**
@@ -121,12 +132,18 @@ object RssParser {
         var channelDescription = ""
         var channelImage: String? = null
         var channelAuthor = ""
+        var channelNewFeedUrl: String? = null
+        var channelFundingUrl: String? = null
+        var channelFundingLabel: String? = null
         val episodes = mutableListOf<ParsedEpisode>()
 
         var inItem = false
         var itemTitle = ""
         var itemGuid = ""
         var itemDescription = ""
+        // <content:encoded> carries the full HTML show notes on most feeds;
+        // <description> is often a one-line teaser
+        var itemContentEncoded = ""
         var itemAudioUrl = ""
         var itemImage: String? = null
         var itemPubDate = 0L
@@ -135,6 +152,10 @@ object RssParser {
         var itemChaptersUrl: String? = null
         var itemTranscriptUrl: String? = null
         var itemTranscriptType: String? = null
+        var itemSeason: Int? = null
+        var itemEpisodeNumber: Int? = null
+        var itemEpisodeType: String? = null
+        val itemPersons = mutableListOf<String>()
 
         var event = parser.eventType
         try {
@@ -150,6 +171,18 @@ object RssParser {
                             "guid" -> if (itemGuid.isEmpty()) itemGuid = parser.nextTextSafe()
                             "description" -> if (itemDescription.isEmpty()) itemDescription = parser.nextTextSafe()
                             "itunes:summary" -> if (itemDescription.isEmpty()) itemDescription = parser.nextTextSafe()
+                            "content:encoded" -> if (itemContentEncoded.isEmpty()) itemContentEncoded = parser.nextTextSafe()
+                            // itunes:* wins; podcast:* only fills a gap
+                            "itunes:season" -> itemSeason = parseNumber(parser.nextTextSafe()) ?: itemSeason
+                            "podcast:season" -> if (itemSeason == null) itemSeason = parseNumber(parser.nextTextSafe())
+                            "itunes:episode" -> itemEpisodeNumber = parseNumber(parser.nextTextSafe()) ?: itemEpisodeNumber
+                            "podcast:episode" -> if (itemEpisodeNumber == null) itemEpisodeNumber = parseNumber(parser.nextTextSafe())
+                            "itunes:episodetype" -> itemEpisodeType =
+                                parser.nextTextSafe().lowercase(Locale.ROOT)
+                                    .takeIf { it in setOf("full", "trailer", "bonus") }
+                            "podcast:person" -> parser.nextTextSafe()
+                                .takeIf { it.isNotBlank() && it !in itemPersons }
+                                ?.let { itemPersons += it }
                             "pubdate" -> itemPubDate = parseDate(parser.nextTextSafe())
                             "itunes:duration" -> itemDuration = parseDuration(parser.nextTextSafe())
                             "itunes:image" -> itemImage = parser.getAttributeValue(null, "href") ?: itemImage
@@ -197,14 +230,26 @@ object RssParser {
                             "item" -> {
                                 inItem = true
                                 itemTitle = ""; itemGuid = ""; itemDescription = ""
+                                itemContentEncoded = ""
                                 itemAudioUrl = ""; itemImage = null
                                 itemPubDate = 0L; itemDuration = 0L
                                 itemChapters.clear(); itemChaptersUrl = null
                                 itemTranscriptUrl = null; itemTranscriptType = null
+                                itemSeason = null; itemEpisodeNumber = null
+                                itemEpisodeType = null; itemPersons.clear()
                             }
                             "title" -> if (channelTitle.isEmpty()) channelTitle = parser.nextTextSafe()
                             "description" -> if (channelDescription.isEmpty()) channelDescription = parser.nextTextSafe()
                             "itunes:author" -> if (channelAuthor.isEmpty()) channelAuthor = parser.nextTextSafe()
+                            "podcast:funding" -> if (channelFundingUrl == null) {
+                                val url = parser.getAttributeValue(null, "url")
+                                if (url != null && url.startsWith("http")) {
+                                    channelFundingUrl = url
+                                    channelFundingLabel = parser.nextTextSafe().takeIf { it.isNotBlank() }
+                                }
+                            }
+                            "itunes:new-feed-url" -> channelNewFeedUrl =
+                                parser.nextTextSafe().takeIf { it.startsWith("http") }
                             "itunes:image" -> channelImage = parser.getAttributeValue(null, "href") ?: channelImage
                             "url" -> if (channelImage == null) channelImage = parser.nextTextSafe().ifEmpty { null }
                         }
@@ -217,7 +262,7 @@ object RssParser {
                             episodes += ParsedEpisode(
                                 guid = itemGuid.ifEmpty { itemAudioUrl },
                                 title = itemTitle.ifEmpty { "(untitled)" },
-                                description = itemDescription,
+                                description = itemContentEncoded.ifEmpty { itemDescription },
                                 audioUrl = itemAudioUrl,
                                 imageUrl = itemImage,
                                 pubDateMs = itemPubDate,
@@ -230,7 +275,12 @@ object RssParser {
                                     else -> null
                                 },
                                 transcriptUrl = itemTranscriptUrl,
-                                transcriptType = itemTranscriptType
+                                transcriptType = itemTranscriptType,
+                                season = itemSeason,
+                                episodeNumber = itemEpisodeNumber,
+                                episodeType = itemEpisodeType,
+                                persons = itemPersons.takeIf { it.isNotEmpty() }
+                                    ?.joinToString(" · ")
                             )
                         }
                     }
@@ -252,7 +302,10 @@ object RssParser {
             description = channelDescription,
             imageUrl = channelImage,
             author = channelAuthor,
-            episodes = episodes
+            episodes = episodes,
+            newFeedUrl = channelNewFeedUrl,
+            fundingUrl = channelFundingUrl,
+            fundingLabel = channelFundingLabel
         )
     }
 
@@ -269,35 +322,71 @@ object RssParser {
         ""
     }
 
-    private fun parseDate(rawText: String): Long {
+    /**
+     * Formatters built once per thread (SimpleDateFormat isn't thread-safe;
+     * refreshes parse on several IO threads). Creating up to ten of them per
+     * episode — and parsing via thrown exceptions — was most of the parse
+     * time on a 2000-episode feed.
+     */
+    private class DateFormats {
+        val iso = isoFormats.map { SimpleDateFormat(it, Locale.US).apply { isLenient = true } }
+        val rfc = rfc822Formats.map { SimpleDateFormat(it, Locale.US).apply { isLenient = true } }
+        /** Feeds use ONE format throughout — try the last winner first. */
+        var lastGood: SimpleDateFormat? = null
+    }
+
+    private val dateFormats = ThreadLocal.withInitial { DateFormats() }
+
+    internal fun parseDate(rawText: String): Long {
         val text = rawText.trim()
         if (text.isEmpty()) return 0
+        val f = dateFormats.get()!!
+        // the shortcut must consume the WHOLE string: a zone-less winner from
+        // another feed would otherwise parse "… +0500" and drop the offset
+        f.lastGood?.let { fmt -> tryParse(fmt, text, requireFull = true)?.let { return it } }
         // ISO-8601 first when it looks like one ("2026-07-27T10:00:00Z")
-        val formats = if (text.length >= 10 && text[4] == '-') {
-            isoFormats + rfc822Formats
-        } else {
-            rfc822Formats
-        }
+        val formats = if (text.length >= 10 && text[4] == '-') f.iso + f.rfc else f.rfc
         for (fmt in formats) {
-            try {
-                return SimpleDateFormat(fmt, Locale.US).parse(text)?.time ?: 0
-            } catch (_: Exception) {
+            tryParse(fmt, text)?.let {
+                f.lastGood = fmt
+                return it
             }
         }
         return 0
     }
 
-    /** Accepts "HH:MM:SS", "MM:SS" or plain seconds. */
-    private fun parseDuration(text: String): Long {
+    /** Null on no match — ParsePosition instead of exceptions. */
+    private fun tryParse(fmt: SimpleDateFormat, text: String, requireFull: Boolean = false): Long? {
+        val pos = java.text.ParsePosition(0)
+        val date = fmt.parse(text, pos) ?: return null
+        if (requireFull && pos.index != text.length) return null
+        // a partial match ("2026-07-27" against a date-time pattern) is fine
+        // only when the pattern itself is date-only; otherwise demand we
+        // consumed the meaningful part of the string
+        if (pos.index < minOf(text.length, 10)) return null
+        return date.time
+    }
+
+    /** "3", " 12 ", "4.0" → Int; anything else → null. */
+    private fun parseNumber(text: String): Int? =
+        text.trim().toDoubleOrNull()?.takeIf { it >= 0 && it < 100_000 }?.toInt()
+
+    /**
+     * Accepts "HH:MM:SS", "MM:SS" or plain seconds — each part optionally
+     * fractional ("3600.5", "1:02:03.250"), which feeds do send and which
+     * used to become 0 (unknown duration).
+     */
+    internal fun parseDuration(text: String): Long {
         if (text.isEmpty()) return 0
         return try {
-            val parts = text.split(":").map { it.trim().toLong() }
-            when (parts.size) {
-                3 -> (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000
-                2 -> (parts[0] * 60 + parts[1]) * 1000
-                1 -> parts[0] * 1000
-                else -> 0
+            val parts = text.split(":").map { it.trim().toDouble() }
+            val seconds = when (parts.size) {
+                3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]
+                2 -> parts[0] * 60 + parts[1]
+                1 -> parts[0]
+                else -> 0.0
             }
+            if (seconds.isNaN() || seconds < 0) 0 else (seconds * 1000).toLong()
         } catch (e: Exception) {
             0
         }

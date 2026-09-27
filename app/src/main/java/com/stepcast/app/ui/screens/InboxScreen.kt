@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +18,6 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,9 +49,9 @@ fun InboxScreen(
     playerState: PlayerUiState,
     onOpenPodcast: (Long) -> Unit = {}
 ) {
-    val episodes by repository.inbox().collectAsState(initial = emptyList())
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
-    val queued by repository.queue.collectAsState(initial = emptyList())
+    val episodes by repository.inbox().collectAsStateWithLifecycle(initialValue = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val queued by repository.queue.collectAsStateWithLifecycle(initialValue = emptyList())
     val byId = podcasts.associateBy { it.id }
     val queuedIds = queued.mapTo(HashSet()) { it.id }
     val scope = rememberCoroutineScope()

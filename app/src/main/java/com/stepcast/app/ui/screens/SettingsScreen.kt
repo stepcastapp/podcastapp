@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -42,7 +43,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,7 +91,12 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
+    var recapOpen by remember { mutableStateOf(false) }
+    val requestNotifications = com.stepcast.app.ui.rememberNotificationPermissionRequest()
+    if (recapOpen) {
+        RecapDialog(repository = repository, onDismiss = { recapOpen = false })
+    }
+    val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
     var reorderDialogOpen by remember { mutableStateOf(false) }
     var diagnosticsOpen by remember { mutableStateOf(false) }
     var bpImporting by remember { mutableStateOf(false) }
@@ -522,6 +527,13 @@ fun SettingsScreen(
             checked = AppSettings.adChapterAutoSkip,
             onToggle = { AppSettings.setAdChapterAutoSkip(context, it) }
         )
+        NumberSetting(
+            label = stringResource(R.string.volume_boost),
+            unit = stringResource(R.string.decibels),
+            value = AppSettings.volumeBoostDb,
+            hint = stringResource(R.string.volume_boost_hint),
+            onCommit = { AppSettings.setVolumeBoostDb(context, it) }
+        )
         SwitchSetting(
             label = stringResource(R.string.trim_silence),
             hint = stringResource(R.string.skips_silent_gaps_in_speech_applies_from_t),
@@ -538,7 +550,7 @@ fun SettingsScreen(
                 context.sendBroadcast(
                     android.content.Intent(
                         context,
-                        com.stepcast.app.playback.CommandReceiver::class.java
+                        com.stepcast.app.playback.InternalCommandReceiver::class.java
                     ).setAction(
                         com.stepcast.app.playback.CommandReceiver
                             .ACTION_REFRESH_NOTIF_BUTTONS
@@ -626,7 +638,10 @@ fun SettingsScreen(
             label = stringResource(R.string.new_episode_notifications),
             hint = stringResource(R.string.notify_when_background_refresh_finds_new_e),
             checked = AppSettings.newEpisodeNotifications,
-            onToggle = { AppSettings.setNewEpisodeNotifications(context, it) }
+            onToggle = {
+                AppSettings.setNewEpisodeNotifications(context, it)
+                if (it) requestNotifications(context)
+            }
         )
         if (AppSettings.newEpisodeNotifications) {
             SwitchSetting(
@@ -636,6 +651,29 @@ fun SettingsScreen(
                 onToggle = { AppSettings.setNotifyOnlyAtCheckpoints(context, it) }
             )
         }
+        NumberSetting(
+            label = stringResource(R.string.download_storage_limit),
+            unit = stringResource(R.string.gigabytes),
+            value = AppSettings.downloadCapGb,
+            hint = stringResource(R.string.download_storage_limit_hint),
+            onCommit = { AppSettings.setDownloadCapGb(context, it) }
+        )
+        if (com.stepcast.app.download.DownloadStorage.hasRemovable(context) ||
+            AppSettings.downloadsOnSdCard
+        ) {
+            SwitchSetting(
+                label = stringResource(R.string.downloads_on_sd_card),
+                hint = stringResource(R.string.downloads_on_sd_card_hint),
+                checked = AppSettings.downloadsOnSdCard,
+                onToggle = { AppSettings.setDownloadsOnSdCard(context, it) }
+            )
+        }
+        SwitchSetting(
+            label = stringResource(R.string.allow_external_automation),
+            hint = stringResource(R.string.allow_external_automation_hint),
+            checked = AppSettings.allowExternalAutomation,
+            onToggle = { AppSettings.setAllowExternalAutomation(context, it) }
+        )
         ActionRow(
             label = stringResource(R.string.storage_2),
             hint = stringResource(R.string.downloaded_episodes_by_podcast_with_one_ta),
@@ -819,6 +857,11 @@ fun SettingsScreen(
             toggleSection("Stats")
         }
         if (sectionOpen("Stats")) {
+        ActionRow(
+            label = stringResource(R.string.recap_action),
+            hint = stringResource(R.string.recap_action_hint),
+            onClick = { recapOpen = true }
+        )
         val statsSince = if (com.stepcast.app.data.ListenStats.sinceMs > 0) {
             " " + stringResource(
                 R.string.stats_since,
@@ -899,6 +942,12 @@ fun SettingsScreen(
         SectionDivider()
 
         // ---- BeyondPod import ----------------------------------------------
+        SectionHeader(stringResource(R.string.sync), sectionOpen("Sync")) {
+            toggleSection("Sync")
+        }
+        if (sectionOpen("Sync")) {
+            SyncSettings(repository)
+        }
         SectionHeader(stringResource(R.string.import_from_beyondpod), sectionOpen("Import from BeyondPod")) {
             toggleSection("Import from BeyondPod")
         }

@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,7 +21,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import com.stepcast.app.R
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,8 +50,8 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun DownloadsScreen(repository: PodcastRepository) {
-    val activity by repository.downloadActivity.collectAsState(initial = emptyList())
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
+    val activity by repository.downloadActivity.collectAsStateWithLifecycle(initialValue = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
     val podcastsById = podcasts.associateBy { it.id }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

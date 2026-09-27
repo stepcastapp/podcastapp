@@ -16,7 +16,34 @@ data class SearchResult(
 )
 
 /** Podcast directory search backed by the iTunes Search API. */
-class ItunesSearch(private val http: OkHttpClient = OkHttpClient()) {
+class ItunesSearch(
+    private val http: OkHttpClient = Http.api,
+    private val podcastIndex: PodcastIndexSearch = PodcastIndexSearch(http)
+) {
+
+    /**
+     * Apple first, then Podcast Index results Apple didn't have (when a key
+     * is configured). Either directory failing alone still returns the
+     * other's results; both failing throws.
+     */
+    suspend fun search(term: String, limit: Int = 30): List<SearchResult> {
+        val apple = runCatching { searchApple(term, limit) }
+        val index = if (podcastIndex.enabled) {
+            runCatching { podcastIndex.search(term, limit) }
+        } else {
+            Result.success(emptyList())
+        }
+        if (apple.isFailure && (index.isFailure || !podcastIndex.enabled)) {
+            throw apple.exceptionOrNull()!!
+        }
+        val merged = apple.getOrDefault(emptyList()).toMutableList()
+        val seen = merged.mapTo(HashSet()) { normalize(it.feedUrl) }
+        index.getOrDefault(emptyList()).filterTo(merged) { seen.add(normalize(it.feedUrl)) }
+        return merged
+    }
+
+    private fun normalize(url: String) =
+        url.trim().substringAfter("://").removeSuffix("/").lowercase()
 
     /**
      * Apple's top-podcasts chart. The chart API doesn't include feed URLs,
@@ -24,15 +51,11 @@ class ItunesSearch(private val http: OkHttpClient = OkHttpClient()) {
      */
     suspend fun trending(limit: Int = 25): List<SearchResult> =
         withContext(Dispatchers.IO) {
-            val chartsUrl = "https://rss.applemarketingtools.com/api/v2/us/" +
-                "podcasts/top/$limit/podcasts.json"
-            val chart = http.newCall(Request.Builder().url(chartsUrl).build())
-                .execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw IOException("Charts failed: HTTP ${response.code}")
-                    }
-                    JSONObject(response.body?.string().orEmpty())
-                }
+            // the listener's own country's chart (a UK listener was shown US
+            // shows); storefronts Apple doesn't chart fall back to US
+            val chart = fetchChart(storefront(), limit)
+                ?: fetchChart("us", limit)
+                ?: throw IOException("Charts failed")
             val entries = chart.optJSONObject("feed")?.optJSONArray("results")
                 ?: return@withContext emptyList()
             val ids = buildList {
@@ -46,6 +69,7 @@ class ItunesSearch(private val http: OkHttpClient = OkHttpClient()) {
             val lookupUrl = "https://itunes.apple.com/lookup".toHttpUrl().newBuilder()
                 .addQueryParameter("id", ids.joinToString(","))
                 .addQueryParameter("entity", "podcast")
+                .addQueryParameter("country", storefront())
                 .build()
             val byId = HashMap<String, SearchResult>()
             http.newCall(Request.Builder().url(lookupUrl).build())
@@ -75,13 +99,30 @@ class ItunesSearch(private val http: OkHttpClient = OkHttpClient()) {
             ids.mapNotNull { byId[it] }.distinctBy { it.feedUrl }
         }
 
-    suspend fun search(term: String, limit: Int = 30): List<SearchResult> =
+    /** Two-letter storefront from the device region; "us" when unknown. */
+    private fun storefront(): String =
+        java.util.Locale.getDefault().country.lowercase(java.util.Locale.ROOT)
+            .takeIf { it.length == 2 } ?: "us"
+
+    private fun fetchChart(country: String, limit: Int): JSONObject? {
+        val url = "https://rss.applemarketingtools.com/api/v2/$country/" +
+            "podcasts/top/$limit/podcasts.json"
+        return runCatching {
+            http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                if (!response.isSuccessful) null
+                else JSONObject(response.body?.string().orEmpty())
+            }
+        }.getOrNull()
+    }
+
+    private suspend fun searchApple(term: String, limit: Int): List<SearchResult> =
         withContext(Dispatchers.IO) {
             val url = "https://itunes.apple.com/search".toHttpUrl().newBuilder()
                 .addQueryParameter("term", term)
                 .addQueryParameter("media", "podcast")
                 .addQueryParameter("entity", "podcast")
                 .addQueryParameter("limit", limit.toString())
+                .addQueryParameter("country", storefront())
                 .build()
             val request = Request.Builder().url(url).build()
             http.newCall(request).execute().use { response ->

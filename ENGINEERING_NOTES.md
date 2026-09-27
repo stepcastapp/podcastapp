@@ -243,6 +243,14 @@ build or one confused on-device session.
   swipe handlers, pill callbacks.)
 - **Extension functions can't be called fully-qualified** — `verticalScroll`,
   `detectVerticalDragGestures` each broke a CI build. Import them.
+- **Queue drag-to-reorder now uses the Reorderable library**
+  (`sh.calvin.reorderable`, review wave 5) after four hand-rolled
+  attempts. The notes below explain WHY each of those broke — keep them for
+  any other custom gesture, but don't re-roll the queue drag. What still
+  matters with the library: reorder a LOCAL copy during the drag, persist
+  once on drop, and only drop the local copy when neither a drag nor its
+  save is in flight (a Room emission from before the save would snap rows
+  back).
 - **`detectDragGestures` throws the touch slop away.** It reports deltas
   only AFTER slop is exceeded and never hands the slop distance back, so a
   dragged item starts ~a slop behind the finger and stays there for the
@@ -353,6 +361,25 @@ build or one confused on-device session.
   for the captured id list.
 
 ## Room / data
+
+- **Schemas are exported** (`app/schemas/`, from v22) and
+  `MigrationTest` (Robolectric, JVM) runs real upgrades and validates them
+  against Room's expected schema. Add a test case with every new
+  migration. Tests needing SQLite/XmlPullParser run under Robolectric with
+  a plain `Application` (robolectric.properties). Locally, pass
+  `-ProbolectricRepo=<mirror>` if Maven Central rate-limits the android-all
+  download.
+- **Repository flows are shared** (`shared()` = distinctUntilChanged +
+  shareIn(WhileSubscribed(5s))), and screens collect with
+  `collectAsStateWithLifecycle`. Never expose a `get() = dao.observe…()`
+  getter to the UI again: a new Flow per access restarted the query on
+  every recomposition, and without distinct every 5-second position save
+  re-emitted every episodes query with identical rows.
+- **Feed refresh is conditional**: ETag/Last-Modified per podcast; a 304
+  skips download and parse (download rules still run). Validators are
+  saved only AFTER the episodes are stored. Parser changes that should
+  reach already-fetched feeds need the validators cleared (a migration
+  `UPDATE podcasts SET feedEtag = NULL, feedLastModified = NULL`).
 
 - **Schema history:** v9→10 `episodes.playedAtMs`; v10→11 per-feed
   cap/sort/auto-queue/failures + `listen_stats`; v11→12

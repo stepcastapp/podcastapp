@@ -102,6 +102,8 @@ jobs:
           STEPCAST_UPLOAD_STORE_PASSWORD: ${{ secrets.PLAY_UPLOAD_STORE_PASSWORD }}
           STEPCAST_UPLOAD_KEY_ALIAS: ${{ secrets.PLAY_UPLOAD_KEY_ALIAS }}
           STEPCAST_UPLOAD_KEY_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEY_PASSWORD }}
+          PODCASTINDEX_KEY: ${{ secrets.PODCASTINDEX_KEY }}
+          PODCASTINDEX_SECRET: ${{ secrets.PODCASTINDEX_SECRET }}
         run: |
           gradle bundleRelease assembleRelease --stacktrace \
             -PstepcastVersionCode='${{ steps.version.outputs.code }}' \

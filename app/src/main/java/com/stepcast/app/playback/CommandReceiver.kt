@@ -31,11 +31,23 @@ import kotlinx.coroutines.withTimeoutOrNull
  * START_SMART_PLAY with string extra "smartplay" = the SmartPlay's name
  * (case-insensitive).
  */
-class CommandReceiver : BroadcastReceiver() {
+open class CommandReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         val app = context.applicationContext as? StepcastApplication ?: return
+        // This receiver is exported, so ANY installed app can reach it — and
+        // DONE marks played + deletes a download. External commands need the
+        // user's opt-in; the app's own senders use the non-exported
+        // [InternalCommandReceiver] and are never gated.
+        if (this !is InternalCommandReceiver &&
+            !com.stepcast.app.data.AppSettings.allowExternalAutomation
+        ) {
+            com.stepcast.app.data.PlaybackJournal.log(
+                "automation", "refused ${action.substringAfterLast('.')}: external control is off"
+            )
+            return
+        }
         if (action == ACTION_REFRESH) {
             RefreshWorker.refreshNow(context.applicationContext)
             return
@@ -218,3 +230,10 @@ class CommandReceiver : BroadcastReceiver() {
         const val ACTION_REFRESH_NOTIF_BUTTONS = PREFIX + "REFRESH_NOTIF_BUTTONS"
     }
 }
+
+/**
+ * The same commands for Stepcast's OWN senders (shortcuts, Settings, player
+ * UI). Not exported, so only this app can reach it, and it skips the
+ * external-automation opt-in.
+ */
+class InternalCommandReceiver : CommandReceiver()

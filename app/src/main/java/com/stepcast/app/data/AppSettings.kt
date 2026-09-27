@@ -149,6 +149,19 @@ object AppSettings {
         librarySortByRecent = p[booleanPreferencesKey(KEY_LIB_SORT_RECENT)] ?: false
         homeBadgeMode = p[intPreferencesKey(KEY_HOME_BADGE)] ?: BADGE_OFF
         activeStationId = p[longPreferencesKey(KEY_ACTIVE_STATION)] ?: 0L
+        volumeBoostDb = (p[intPreferencesKey(KEY_VOLUME_BOOST)] ?: 0).coerceIn(0, 10)
+        downloadCapGb = p[intPreferencesKey(KEY_DOWNLOAD_CAP)] ?: 0
+        downloadsOnSdCard = p[booleanPreferencesKey(KEY_DOWNLOADS_SD)] ?: false
+        clearDeviceBoundAfterCloudRestore(context, p)
+        // Automation from other apps: ON for installs that predate the
+        // setting (their Tasker profiles must keep working), OFF for fresh
+        // installs — any app could otherwise mark episodes played and delete
+        // downloads with one broadcast. Decided once, then persisted.
+        val storedAutomation = p[booleanPreferencesKey(KEY_ALLOW_AUTOMATION)]
+        allowExternalAutomation = storedAutomation ?: p.asMap().isNotEmpty()
+        if (storedAutomation == null) {
+            putBoolean(context, KEY_ALLOW_AUTOMATION, allowExternalAutomation)
+        }
         checkpointTimes = parseIntList(
             p[stringPreferencesKey(KEY_CHECKPOINT_TIMES)], listOf(390, 720, 1050, 1320)
         )
@@ -291,6 +304,83 @@ object AppSettings {
         putBoolean(context, KEY_NOTIFY_NEW, enabled)
     }
 
+    /**
+     * Google Auto Backup restores this settings file onto a NEW phone, but
+     * never the database. Some settings only mean something on the device
+     * that wrote them: a SmartPlay id (the restored library gets fresh ids,
+     * so it could name a different SmartPlay) and a SAF folder grant (which
+     * doesn't transfer — auto-backup would fail forever). A marker in
+     * noBackupFilesDir (never backed up) tells a restore apart from an app
+     * update: missing marker + no database yet = settings arrived from the
+     * cloud onto a fresh install.
+     */
+    private fun clearDeviceBoundAfterCloudRestore(
+        context: Context,
+        p: androidx.datastore.preferences.core.Preferences
+    ) {
+        val marker = java.io.File(context.noBackupFilesDir, "install_marker")
+        if (marker.exists()) return
+        val dbExisted = context.getDatabasePath("stepcast.db").exists()
+        if (!dbExisted && p.asMap().isNotEmpty()) {
+            activeStationId = 0L
+            autoBackupFolder = null
+            lastAutoBackupMs = 0L
+            val appContext = context.applicationContext
+            prefsWriteScope.launch {
+                appContext.settingsStore.edit {
+                    it.remove(longPreferencesKey(KEY_ACTIVE_STATION))
+                    it.remove(stringPreferencesKey(KEY_AUTO_BACKUP))
+                    it.remove(longPreferencesKey(KEY_LAST_AUTO_BACKUP))
+                }
+            }
+        }
+        runCatching { marker.createNewFile() }
+    }
+
+    /** Download storage limit in GB; 0 = unlimited. */
+    var downloadCapGb by mutableStateOf(0)
+        private set
+
+    fun setDownloadCapGb(context: Context, gb: Int) {
+        downloadCapGb = gb.coerceIn(0, 2048)
+        val value = downloadCapGb
+        val appContext = context.applicationContext
+        prefsWriteScope.launch {
+            appContext.settingsStore.edit { it[intPreferencesKey(KEY_DOWNLOAD_CAP)] = value }
+        }
+    }
+
+    /** New downloads go to the removable volume (SD card) when one is mounted. */
+    var downloadsOnSdCard by mutableStateOf(false)
+        private set
+
+    fun setDownloadsOnSdCard(context: Context, enabled: Boolean) {
+        downloadsOnSdCard = enabled
+        putBoolean(context, KEY_DOWNLOADS_SD, enabled)
+    }
+
+    /** Extra loudness for quiet shows, in dB (0 = off, max 10). */
+    var volumeBoostDb by mutableStateOf(0)
+        private set
+
+    fun setVolumeBoostDb(context: Context, db: Int) {
+        volumeBoostDb = db.coerceIn(0, 10)
+        val value = volumeBoostDb
+        val appContext = context.applicationContext
+        prefsWriteScope.launch {
+            appContext.settingsStore.edit { it[intPreferencesKey(KEY_VOLUME_BOOST)] = value }
+        }
+    }
+
+    /** Whether other apps (Tasker, adb, Routines) may send command broadcasts. */
+    var allowExternalAutomation by mutableStateOf(false)
+        private set
+
+    fun setAllowExternalAutomation(context: Context, enabled: Boolean) {
+        allowExternalAutomation = enabled
+        putBoolean(context, KEY_ALLOW_AUTOMATION, enabled)
+    }
+
     fun setNotifyOnlyAtCheckpoints(context: Context, enabled: Boolean) {
         notifyOnlyAtCheckpoints = enabled
         putBoolean(context, KEY_NOTIFY_CHECKPOINTS, enabled)
@@ -422,6 +512,10 @@ object AppSettings {
     private const val KEY_LIB_SORT_RECENT = "librarySortByRecent"
     private const val KEY_HOME_BADGE = "homeBadgeMode"
     private const val KEY_ACTIVE_STATION = "activeStationId"
+    private const val KEY_ALLOW_AUTOMATION = "allowExternalAutomation"
+    private const val KEY_VOLUME_BOOST = "volumeBoostDb"
+    private const val KEY_DOWNLOAD_CAP = "downloadCapGb"
+    private const val KEY_DOWNLOADS_SD = "downloadsOnSdCard"
     private const val KEY_CHECKPOINT_TIMES = "checkpointTimes"
     private const val KEY_CHECKPOINT_ON = "checkpointEnabled"
     private const val KEY_QUIET_ON = "quietHoursEnabled"

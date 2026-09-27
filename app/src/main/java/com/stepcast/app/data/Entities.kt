@@ -67,7 +67,17 @@ data class Podcast(
      * of the library: it never refreshes, never offers schedule rules,
      * and is not a SmartPlay scope. Subscribing later just flips this.
      */
-    val subscribed: Boolean = true
+    val subscribed: Boolean = true,
+    /**
+     * HTTP validators from the last successful feed fetch. Sent back as
+     * If-None-Match / If-Modified-Since so an unchanged feed answers 304
+     * and the refresh skips the download AND the parse.
+     */
+    val feedEtag: String? = null,
+    val feedLastModified: String? = null,
+    /** Podcasting 2.0 <podcast:funding>: where to support the show. */
+    val fundingUrl: String? = null,
+    val fundingLabel: String? = null
 ) {
     companion object {
         const val FILTER_ALL = 0
@@ -87,7 +97,13 @@ data class Podcast(
     tableName = "episodes",
     indices = [
         Index(value = ["podcastId", "guid"], unique = true),
-        Index(value = ["podcastId", "pubDateMs"])
+        Index(value = ["podcastId", "pubDateMs"]),
+        // library-wide date windows (New inbox + its count, History-like
+        // scans) — without it every one was a full table scan, re-run on
+        // every position save while something played
+        Index(value = ["pubDateMs"]),
+        // the Downloads screen / activity queries
+        Index(value = ["downloadStatus"])
     ]
 )
 data class Episode(
@@ -136,7 +152,16 @@ data class Episode(
      * can differ from "sort by title" even though title is currently
      * filename-derived.
      */
-    val sourceFileName: String? = null
+    val sourceFileName: String? = null,
+    /** itunes:season / itunes:episode (or podcast:season/episode); null = unnumbered. */
+    val season: Int? = null,
+    val episodeNumber: Int? = null,
+    /** itunes:episodeType: "full" (default), "trailer" or "bonus". */
+    val episodeType: String? = null,
+    /** Podcasting 2.0 <podcast:person> names, " · "-joined; null = none. */
+    val persons: String? = null,
+    /** Last time a position was saved while listening; drives "Continue listening". */
+    val lastPlayedMs: Long = 0
 ) {
     val progressFraction: Float
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
@@ -272,6 +297,44 @@ data class SmartPlayEntry(
 @Entity(tableName = "listen_stats")
 data class ListenStat(
     @PrimaryKey val podcastId: Long,
+    val wallMs: Long = 0,
+    val contentMs: Long = 0
+)
+
+/**
+ * Full-text index over episode titles and show notes (Library search).
+ * External-content FTS4: Room keeps it in sync with [Episode] through
+ * triggers, and it stores only the index, not a second copy of the text.
+ */
+@androidx.room.Fts4(contentEntity = Episode::class)
+@Entity(tableName = "episodes_fts")
+data class EpisodeFts(
+    val title: String,
+    val description: String
+)
+
+/** A saved moment in an episode, with an optional note. */
+@Entity(
+    tableName = "bookmarks",
+    indices = [Index(value = ["episodeId"])]
+)
+data class Bookmark(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val episodeId: Long,
+    val positionMs: Long,
+    val note: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * Listening time per local calendar day and show — the input for the
+ * yearly recap ([ListenStat] only has all-time totals).
+ */
+@Entity(tableName = "listen_daily", primaryKeys = ["day", "podcastId"])
+data class ListenDaily(
+    /** LocalDate.toEpochDay() in the device zone. */
+    val day: Long,
+    val podcastId: Long,
     val wallMs: Long = 0,
     val contentMs: Long = 0
 )

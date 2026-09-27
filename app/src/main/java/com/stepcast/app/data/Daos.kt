@@ -83,6 +83,32 @@ interface PodcastDao {
     )
     suspend fun updateLocalScan(id: Long, lastRefreshed: Long, fallbackArt: String?)
 
+    @Query(
+        "UPDATE podcasts SET fundingUrl = :url, fundingLabel = :label WHERE id = :id " +
+            "AND (fundingUrl IS NOT :url OR fundingLabel IS NOT :label)"
+    )
+    suspend fun updateFunding(id: Long, url: String?, label: String?)
+
+    /** HTTP validators from the last full fetch (see [Podcast.feedEtag]). */
+    @Query(
+        "UPDATE podcasts SET feedEtag = :etag, feedLastModified = :lastModified WHERE id = :id"
+    )
+    suspend fun updateValidators(id: Long, etag: String?, lastModified: String?)
+
+    /** A 304 Not Modified is a successful refresh with nothing to parse. */
+    @Query(
+        "UPDATE podcasts SET lastRefreshed = :lastRefreshed, consecutiveFailures = 0 " +
+            "WHERE id = :id"
+    )
+    suspend fun markRefreshedUnchanged(id: Long, lastRefreshed: Long)
+
+    /** The publisher moved the feed (301/308 or itunes:new-feed-url). */
+    @Query(
+        "UPDATE podcasts SET feedUrl = :feedUrl, feedEtag = NULL, feedLastModified = NULL " +
+            "WHERE id = :id"
+    )
+    suspend fun adoptMovedFeedUrl(id: Long, feedUrl: String)
+
     /** Dead-feed repair: repoint + adopt the new feed's metadata, narrowly. */
     @Query(
         "UPDATE podcasts SET feedUrl = :feedUrl, " +
@@ -90,7 +116,8 @@ interface PodcastDao {
             "description = CASE WHEN :description = '' THEN description ELSE :description END, " +
             "imageUrl = COALESCE(:imageUrl, imageUrl), " +
             "author = CASE WHEN :author = '' THEN author ELSE :author END, " +
-            "lastRefreshed = :lastRefreshed, consecutiveFailures = 0 " +
+            "lastRefreshed = :lastRefreshed, consecutiveFailures = 0, " +
+            "feedEtag = NULL, feedLastModified = NULL " +
             "WHERE id = :id"
     )
     suspend fun repoint(
@@ -255,8 +282,22 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun get(id: Long): Episode?
 
+    @Query("SELECT id FROM episodes WHERE podcastId = :podcastId AND guid = :guid LIMIT 1")
+    suspend fun idByGuid(podcastId: Long, guid: String): Long?
+
+    @Query(
+        "SELECT id FROM episodes WHERE podcastId = :podcastId AND audioUrl = :audioUrl LIMIT 1"
+    )
+    suspend fun idByAudioUrl(podcastId: Long, audioUrl: String): Long?
+
     @Query("SELECT * FROM episodes WHERE audioUrl = :audioUrl LIMIT 1")
     suspend fun getByAudioUrl(audioUrl: String): Episode?
+
+    @Query(
+        "SELECT * FROM episodes WHERE downloadStatus = 2 AND played = 1 " +
+            "ORDER BY playedAtMs ASC"
+    )
+    suspend fun listDownloadedPlayed(): List<Episode>
 
     @Query("SELECT id FROM episodes WHERE downloadStatus = 1")
     suspend fun downloadingIds(): List<Long>
@@ -293,6 +334,16 @@ interface EpisodeDao {
     )
     suspend fun searchByTitle(query: String): List<Episode>
 
+    /**
+     * Full-text search over titles AND show notes. [match] is an FTS4
+     * MATCH expression built by the repository (prefix terms, quoted).
+     */
+    @Query(
+        "SELECT e.* FROM episodes e INNER JOIN episodes_fts f ON e.id = f.docid " +
+            "WHERE episodes_fts MATCH :match ORDER BY e.pubDateMs DESC LIMIT 100"
+    )
+    suspend fun searchFullText(match: String): List<Episode>
+
     /** Release-pattern inference input (ScheduleEngine's Automatic mode). */
     @Query(
         "SELECT pubDateMs FROM episodes WHERE podcastId = :podcastId " +
@@ -303,8 +354,20 @@ interface EpisodeDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(episodes: List<Episode>): List<Long>
 
-    @Query("UPDATE episodes SET positionMs = :positionMs WHERE id = :id")
-    suspend fun updatePosition(id: Long, positionMs: Long)
+    @Query(
+        "UPDATE episodes SET positionMs = :positionMs, " +
+            "lastPlayedMs = CASE WHEN :positionMs > 0 THEN :nowMs ELSE lastPlayedMs END " +
+            "WHERE id = :id"
+    )
+    suspend fun updatePosition(id: Long, positionMs: Long, nowMs: Long = System.currentTimeMillis())
+
+    /** Half-listened episodes, most recently listened first ("Continue listening"). */
+    @Query(
+        "SELECT e.* FROM episodes e INNER JOIN podcasts p ON p.id = e.podcastId " +
+            "WHERE e.played = 0 AND e.positionMs > 0 " +
+            "ORDER BY e.lastPlayedMs DESC, e.pubDateMs DESC LIMIT 12"
+    )
+    fun observeInProgress(): Flow<List<Episode>>
 
     @Query("UPDATE episodes SET durationMs = :durationMs WHERE id = :id AND durationMs <= 0")
     suspend fun updateDurationIfUnknown(id: Long, durationMs: Long)
@@ -466,6 +529,44 @@ interface EpisodeDao {
     @Query("DELETE FROM episodes WHERE podcastId = :podcastId")
     suspend fun deleteForPodcast(podcastId: Long)
 
+    /**
+     * New-episode notification candidates: rows added since the last alert
+     * that would also show in the New inbox (subscribed, unplayed, not
+     * dismissed, published inside the window and after subscribing — so a
+     * fresh subscription's back catalog never pings).
+     */
+    @Query(
+        "SELECT e.id AS id, p.title AS podcastTitle FROM episodes e " +
+            "INNER JOIN podcasts p ON p.id = e.podcastId " +
+            "WHERE e.id > :afterId AND e.played = 0 AND e.inboxDismissed = 0 " +
+            "AND p.subscribed = 1 AND e.pubDateMs >= MAX(:sinceMs, p.subscribedAt) " +
+            "ORDER BY e.pubDateMs DESC"
+    )
+    suspend fun notifyCandidates(afterId: Long, sinceMs: Long): List<NotifyCandidate>
+
+    /** Listening that happened after [sinceMs] — gPodder sync upload. */
+    @Query(
+        "SELECT p.feedUrl AS feedUrl, e.audioUrl AS audioUrl, e.guid AS guid, " +
+            "e.positionMs AS positionMs, e.durationMs AS durationMs, e.played AS played, " +
+            "e.lastPlayedMs AS lastPlayedMs, e.playedAtMs AS playedAtMs " +
+            "FROM episodes e INNER JOIN podcasts p ON p.id = e.podcastId " +
+            "WHERE p.localFolderUri IS NULL AND " +
+            "(e.lastPlayedMs > :sinceMs OR e.playedAtMs > :sinceMs)"
+    )
+    suspend fun progressChangedSince(sinceMs: Long): List<SyncProgressRow>
+
+    @Query(
+        "UPDATE episodes SET positionMs = :positionMs, lastPlayedMs = :atMs WHERE id = :id"
+    )
+    suspend fun applySyncedPosition(id: Long, positionMs: Long, atMs: Long)
+
+    /** Episodes finished inside a time window (the yearly recap). */
+    @Query("SELECT COUNT(*) FROM episodes WHERE played = 1 AND playedAtMs BETWEEN :fromMs AND :toMs")
+    suspend fun countPlayedBetween(fromMs: Long, toMs: Long): Int
+
+    @Query("SELECT COALESCE(MAX(id), 0) FROM episodes")
+    suspend fun maxId(): Long
+
     @Query("SELECT COUNT(*) FROM episodes")
     suspend fun countAll(): Int
 
@@ -491,6 +592,43 @@ interface EpisodeDao {
     /** Each show's newest episode date, for the Library's "most recent" sort. */
     @Query("SELECT podcastId, MAX(pubDateMs) AS latestMs FROM episodes GROUP BY podcastId")
     fun observeLatestEpisodeDates(): Flow<List<PodcastLatestEpisode>>
+
+    /** Podcasting 2.0 / iTunes numbering + people; guarded so unchanged rows aren't rewritten. */
+    @Query(
+        "UPDATE episodes SET season = :season, episodeNumber = :episodeNumber, " +
+            "episodeType = :episodeType, persons = :persons " +
+            "WHERE podcastId = :podcastId AND guid = :guid AND (" +
+            "season IS NOT :season OR episodeNumber IS NOT :episodeNumber OR " +
+            "episodeType IS NOT :episodeType OR persons IS NOT :persons)"
+    )
+    suspend fun updateEpisodeExtras(
+        podcastId: Long,
+        guid: String,
+        season: Int?,
+        episodeNumber: Int?,
+        episodeType: String?,
+        persons: String?
+    )
+
+    /** Backup restore of one episode's listening state (merged by the caller). */
+    @Query(
+        "UPDATE episodes SET played = :played, playedAtMs = :playedAtMs, " +
+            "positionMs = :positionMs, favorite = :favorite WHERE id = :id"
+    )
+    suspend fun restoreState(
+        id: Long,
+        played: Boolean,
+        playedAtMs: Long,
+        positionMs: Long,
+        favorite: Boolean
+    )
+
+    /** Rows carrying listening state worth backing up. */
+    @Query(
+        "SELECT podcastId, guid, audioUrl, played, playedAtMs, positionMs, favorite " +
+            "FROM episodes WHERE played = 1 OR positionMs > 0 OR favorite = 1"
+    )
+    suspend fun listWithState(): List<EpisodeStateRow>
 
     @Query("UPDATE episodes SET favorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: Long, favorite: Boolean)
@@ -556,6 +694,16 @@ interface ListenStatDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(stat: ListenStat): Long
+
+    /** Backup restore: never double-counts when the same file is restored twice. */
+    @Query(
+        "UPDATE listen_stats SET wallMs = MAX(wallMs, :wallMs), " +
+            "contentMs = MAX(contentMs, :contentMs) WHERE podcastId = :podcastId"
+    )
+    suspend fun raiseTo(podcastId: Long, wallMs: Long, contentMs: Long): Int
+
+    @Query("SELECT * FROM listen_stats")
+    suspend fun listAll(): List<ListenStat>
 
     @Query("SELECT * FROM listen_stats ORDER BY wallMs DESC LIMIT :limit")
     suspend fun top(limit: Int): List<ListenStat>
@@ -720,6 +868,32 @@ interface CategoryDao {
     suspend fun delete(name: String)
 }
 
+/** Projection for [EpisodeDao.listWithState] — backup of listening state. */
+data class EpisodeStateRow(
+    val podcastId: Long,
+    val guid: String,
+    val audioUrl: String,
+    val played: Boolean,
+    val playedAtMs: Long,
+    val positionMs: Long,
+    val favorite: Boolean
+)
+
+/** Projection for [EpisodeDao.progressChangedSince]. */
+data class SyncProgressRow(
+    val feedUrl: String,
+    val audioUrl: String,
+    val guid: String,
+    val positionMs: Long,
+    val durationMs: Long,
+    val played: Boolean,
+    val lastPlayedMs: Long,
+    val playedAtMs: Long
+)
+
+/** Projection for [EpisodeDao.notifyCandidates]. */
+data class NotifyCandidate(val id: Long, val podcastTitle: String)
+
 /** Projection for [EpisodeDao.observeCounts]. */
 data class EpisodeCounts(val total: Int, val unplayed: Int)
 
@@ -783,4 +957,46 @@ interface PodcastCategoryDao {
 
     @Query("DELETE FROM podcast_categories WHERE category = :category")
     suspend fun deleteCategory(category: String)
+}
+
+@Dao
+interface BookmarkDao {
+    @Query("SELECT * FROM bookmarks WHERE episodeId = :episodeId ORDER BY positionMs")
+    fun observeFor(episodeId: Long): Flow<List<Bookmark>>
+
+    @Query("SELECT * FROM bookmarks ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<Bookmark>>
+
+    @Query("SELECT * FROM bookmarks")
+    suspend fun listAll(): List<Bookmark>
+
+    @Insert
+    suspend fun insert(bookmark: Bookmark): Long
+
+    @Query("UPDATE bookmarks SET note = :note WHERE id = :id")
+    suspend fun setNote(id: Long, note: String)
+
+    @Query("DELETE FROM bookmarks WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM bookmarks WHERE episodeId IN (SELECT id FROM episodes WHERE podcastId = :podcastId)")
+    suspend fun deleteForPodcast(podcastId: Long)
+}
+
+@Dao
+interface ListenDailyDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(row: ListenDaily): Long
+
+    @Query(
+        "UPDATE listen_daily SET wallMs = wallMs + :wallMs, contentMs = contentMs + :contentMs " +
+            "WHERE day = :day AND podcastId = :podcastId"
+    )
+    suspend fun bump(day: Long, podcastId: Long, wallMs: Long, contentMs: Long): Int
+
+    @Query("SELECT * FROM listen_daily WHERE day BETWEEN :fromDay AND :toDay")
+    suspend fun range(fromDay: Long, toDay: Long): List<ListenDaily>
+
+    @Query("DELETE FROM listen_daily")
+    suspend fun clear()
 }

@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -47,7 +49,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,14 +82,15 @@ fun HomeScreen(
     onCategoryClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit,
-    onOpenInbox: () -> Unit
+    onOpenInbox: () -> Unit,
+    onPlayEpisode: (com.stepcast.app.data.Episode, com.stepcast.app.data.Podcast?) -> Unit = { _, _ -> }
 ) {
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
-    val categoryMetas by repository.categoryMetas.collectAsState(initial = emptyList())
-    val memberships by repository.podcastCategories.collectAsState(initial = emptyList())
-    val badgeCounts by repository.podcastBadgeCounts.collectAsState(initial = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val categoryMetas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
+    val memberships by repository.podcastCategories.collectAsStateWithLifecycle(initialValue = emptyList())
+    val badgeCounts by repository.podcastBadgeCounts.collectAsStateWithLifecycle(initialValue = emptyList())
     val badgeByPodcast = remember(badgeCounts) { badgeCounts.associateBy { it.podcastId } }
-    val latestEpisodeDates by repository.podcastLatestEpisodeDates.collectAsState(initial = emptyList())
+    val latestEpisodeDates by repository.podcastLatestEpisodeDates.collectAsStateWithLifecycle(initialValue = emptyList())
     val latestEpisodeByPodcast = remember(latestEpisodeDates) {
         latestEpisodeDates.associate { it.podcastId to it.latestMs }
     }
@@ -162,6 +164,40 @@ fun HomeScreen(
                         title = stringResource(R.string.nothing_here_yet),
                         hint = stringResource(R.string.home_empty_hint)
                     )
+                    // a new phone restored from Google backup carries a
+                    // library snapshot — bring it back in one tap
+                    val hasSnapshot = remember {
+                        com.stepcast.app.sync.CloudLibrarySnapshot.exists(context)
+                    }
+                    var restoring by remember { mutableStateOf(false) }
+                    val restoreScope = androidx.compose.runtime.rememberCoroutineScope()
+                    if (hasSnapshot) {
+                        androidx.compose.material3.Button(
+                            enabled = !restoring,
+                            onClick = {
+                                restoring = true
+                                restoreScope.launch {
+                                    val result = runCatching {
+                                        com.stepcast.app.sync.CloudLibrarySnapshot
+                                            .restore(context, repository)
+                                    }
+                                    restoring = false
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        result.fold(
+                                            { context.getString(R.string.restore_previous_phone_done, it.feeds) },
+                                            { context.getString(R.string.restore_previous_phone_failed) }
+                                        ),
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                    if (result.isSuccess) RefreshWorker.refreshNow(context)
+                                }
+                            },
+                            modifier = Modifier.padding(top = 20.dp)
+                        ) {
+                            Text(stringResource(R.string.restore_previous_phone))
+                        }
+                    }
                     // a fresh install shouldn't have to hunt through header
                     // icons and Settings to get its first shows
                     androidx.compose.material3.Button(
@@ -188,7 +224,7 @@ fun HomeScreen(
             // runs — which used to make this card arrive after everything
             // else on the screen and shift the category list right as a
             // tap landed.
-            val inboxCount by repository.inboxCount().collectAsState()
+            val inboxCount by repository.inboxCount().collectAsStateWithLifecycle()
             if (inboxCount > 0) {
                 // this card slots in ABOVE the grid, pushing everything
                 // below it down the instant the count arrives — a tap
@@ -240,6 +276,8 @@ fun HomeScreen(
                     }
                 }
             }
+            ContinueListeningRow(repository, podcasts, onPlayEpisode)
+            NotificationPermissionPrompt()
             val refreshingCategories = remember { mutableStateListOf<String>() }
             PodcastGrid(
                 podcasts = podcasts,
@@ -809,4 +847,106 @@ private fun PodcastTile(
             modifier = Modifier.padding(top = 4.dp)
         )
     }
+}
+
+/**
+ * Half-listened episodes, most recently listened first — one tap resumes.
+ * Hidden when there's nothing in progress.
+ */
+@Composable
+private fun ContinueListeningRow(
+    repository: PodcastRepository,
+    podcasts: List<com.stepcast.app.data.Podcast>,
+    onPlay: (com.stepcast.app.data.Episode, com.stepcast.app.data.Podcast?) -> Unit
+) {
+    val inProgress by repository.inProgress.collectAsStateWithLifecycle(initialValue = emptyList())
+    if (inProgress.isEmpty()) return
+    val byId = remember(podcasts) { podcasts.associateBy { it.id } }
+    Text(
+        stringResource(R.string.continue_listening),
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
+    )
+    androidx.compose.foundation.lazy.LazyRow(
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+    ) {
+        items(inProgress.size, key = { inProgress[it].id }) { i ->
+            val ep = inProgress[i]
+            val podcast = byId[ep.podcastId]
+            Column(
+                Modifier
+                    .width(96.dp)
+                    .clickable { onPlay(ep, podcast) }
+            ) {
+                Box {
+                    coil.compose.AsyncImage(
+                        model = ep.imageUrl ?: podcast?.imageUrl,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { ep.progressFraction },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+                Text(
+                    ep.title,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The one explained ask for notification permission: shown once the
+ * library has shows (so "new episodes" means something), only if alerts
+ * are on and the permission is missing, and never again after an answer.
+ */
+@Composable
+private fun NotificationPermissionPrompt() {
+    val context = LocalContext.current
+    var visible by remember {
+        mutableStateOf(
+            com.stepcast.app.data.AppSettings.newEpisodeNotifications &&
+                !com.stepcast.app.ui.NotificationPermission.granted(context) &&
+                !com.stepcast.app.ui.NotificationPermission.asked(context)
+        )
+    }
+    if (!visible) return
+    val request = com.stepcast.app.ui.rememberNotificationPermissionRequest { granted ->
+        if (!granted) com.stepcast.app.data.AppSettings.setNewEpisodeNotifications(context, false)
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = {
+            com.stepcast.app.ui.NotificationPermission.markAsked(context)
+            visible = false
+        },
+        title = { Text(stringResource(R.string.notif_permission_title)) },
+        text = { Text(stringResource(R.string.notif_permission_body)) },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                com.stepcast.app.ui.NotificationPermission.markAsked(context)
+                visible = false
+                request(context)
+            }) { Text(stringResource(R.string.allow)) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                com.stepcast.app.ui.NotificationPermission.markAsked(context)
+                com.stepcast.app.data.AppSettings.setNewEpisodeNotifications(context, false)
+                visible = false
+            }) { Text(stringResource(R.string.not_now)) }
+        }
+    )
 }

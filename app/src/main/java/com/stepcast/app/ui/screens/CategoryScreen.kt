@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,7 +30,6 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,12 +67,12 @@ fun CategoryScreen(
     onRenamed: (String) -> Unit,
     onDeleted: () -> Unit
 ) {
-    val episodes by repository.episodesForCategory(category)
-        .collectAsState(initial = emptyList())
-    val podcasts by repository.podcasts.collectAsState(initial = emptyList())
-    val queueIds by repository.queue.collectAsState(initial = emptyList())
-    val metas by repository.categoryMetas.collectAsState(initial = emptyList())
-    val memberships by repository.podcastCategories.collectAsState(initial = emptyList())
+    val episodes by remember(category) { repository.episodesForCategory(category) }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val podcasts by repository.podcasts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val queueIds by repository.queue.collectAsStateWithLifecycle(initialValue = emptyList())
+    val metas by repository.categoryMetas.collectAsStateWithLifecycle(initialValue = emptyList())
+    val memberships by repository.podcastCategories.collectAsStateWithLifecycle(initialValue = emptyList())
     val queuedIds = queueIds.mapTo(HashSet()) { it.id }
     val memberIds = memberships
         .filter { it.category == category }

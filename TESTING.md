@@ -91,3 +91,40 @@ a screen recording is ideal.
 - [ ] Doze / anchored refresh: set a category anchor a few minutes ahead,
       `adb shell dumpsys deviceidle force-idle`, wait past the slot, exit
       idle — the missed slot catches up on the next worker run
+
+## Review wave 5 (device checks — none of these could be verified off-device)
+- [ ] Backup now → restore on a fresh install: shows come back, and after
+      their first refresh played flags, positions, favorites, History,
+      Up Next order and bookmarks are back; stats totals match
+- [ ] New phone via Google backup/device transfer: empty Library shows
+      "Restore library from your previous phone"; one tap restores it
+- [ ] Notifications with "only around checkpoints": an episode found by
+      an off-checkpoint check is announced at the next checkpoint; tapping
+      the alert opens New episodes
+- [ ] A big download on mobile data, toggle airplane mode mid-way, then
+      back: it resumes from where it stopped (Downloads % continues)
+- [ ] Settings → "Allow control from other apps" OFF: a Tasker/adb
+      broadcast does nothing (journal: "automation refused"); ON: works.
+      Widgets, shortcuts, the notification Done button work either way
+- [ ] Queue drag-to-reorder (Reorderable library): rows follow the finger,
+      auto-scroll at the edges, drop order sticks, bottom-up mode too;
+      TalkBack move earlier/later still works
+- [ ] Sleep timer "end of episode": the NEXT episode never starts audibly;
+      the finished one shows as played
+- [ ] Library search finds an episode by a word only in its show notes
+- [ ] Player: bookmark button adds a bookmark with a note; tapping it seeks
+- [ ] Settings → Stats → "Your year in listening" shows this year's data
+- [ ] Continue listening row appears with half-listened episodes; tap resumes
+- [ ] Cast: with a Chromecast on the network, the Cast button appears in
+      the player; casting moves the episode to the TV at the same spot;
+      disconnecting brings it back to the phone where the TV left off
+- [ ] Android Auto: search box finds shows/episodes; "play <show>" by voice
+      starts its next unplayed episode; Assistant on the phone too
+- [ ] Volume boost 6 dB is audibly louder, no clipping
+- [ ] Sync (Nextcloud gPodder Sync or gpodder.net): Sync now succeeds,
+      subscriptions appear on the other client, progress from AntennaPod
+      shows up here after a sync
+- [ ] Tablet / unfolded / landscape ≥600dp: navigation rail on the left
+- [ ] Download storage limit: set 1 GB, downloads beyond it remove played
+      downloads first, then fail with a reason; SD-card option on a phone
+      with a card

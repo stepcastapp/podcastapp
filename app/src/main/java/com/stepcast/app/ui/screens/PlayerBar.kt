@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,7 +62,7 @@ internal fun seekForwardIcon(seconds: Int): ImageVector = when (seconds) {
 /** Floating signal-colored pill above the nav bar. Tap or swipe up to expand. */
 @Composable
 fun PlayerBar(state: PlayerUiState, player: PlayerConnection, onExpand: () -> Unit) {
-    val progress by player.progress.collectAsState()
+    val progress by player.progress.collectAsStateWithLifecycle()
     val view = androidx.compose.ui.platform.LocalView.current
     // pointerInput(Unit) never restarts — read the callback via live state
     val currentOnExpand by androidx.compose.runtime.rememberUpdatedState(onExpand)

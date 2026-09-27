@@ -104,7 +104,18 @@ alias.)
 3. Paste the privacy policy URL from step 3.
 4. Data Safety form: collects/shares data → **No** (see "Data Safety
    answers" below).
-5. Content rating questionnaire: podcast player; the UGC questions —
+5. **Foreground service declaration** (App content → Foreground service
+   permissions). Required because targetSdk ≥ 34 and the manifest declares
+   two FGS types. Answer per type, and attach a short screen recording
+   (a phone recording uploaded as an unlisted YouTube link is fine):
+   - `mediaPlayback` → "Media playback": podcast audio keeps playing
+     with the screen off / app backgrounded. Video: start an episode,
+     lock the phone, show the lock-screen media card while it plays.
+   - `dataSync` → "Network transfer / downloads": user-requested and
+     rule-driven episode downloads run as a visible, cancellable progress
+     notification (WorkManager's foreground service). Video: tap Download
+     on an episode, pull down the shade to show the progress notification.
+6. Content rating questionnaire: podcast player; the UGC questions —
    plays user-selected third-party feeds, no user-to-user content, no
    moderation needed → normally passes for players. Target audience 13+
    or 18+ (never "designed for children").
@@ -123,11 +134,38 @@ on-device sanity install first.
 
 **Sideload → Play migration on your own phone:** the Play build is signed
 with a different key than the daily-driver build, so Android refuses the
-update path. Before switching: Settings → Backup now (subscriptions,
-SmartPlays, settings survive; downloads/positions refetch), uninstall,
-install the Play (or upload-key) build, restore.
+update path. Before switching: Settings → Backup now, uninstall, install
+the Play (or upload-key) build, restore. Since backup format v3 the file
+carries subscriptions, SmartPlays, settings AND listening state: played
+flags, positions, favorites, History dates, Up Next order, saved one-off
+episodes and listening stats. The state is staged and applied as each
+feed's first refresh inserts its episodes (a few minutes on a big
+library). Only downloaded audio has to re-download. **Make the backup
+with a build that has format v3** — an older backup file carries no
+listening state.
+
+Automation: fresh installs start with "Allow control from other apps"
+OFF (Settings → Feeds & downloads). The restore brings the setting back,
+but re-check it if Tasker stops working.
 
 ## Data Safety answers (reference)
+
+**Re-check after review wave 5** (sync, Cast, Podcast Index, cloud
+library snapshot):
+- Optional **gPodder/Nextcloud sync** transmits subscriptions and
+  listening progress to a server the USER chooses and controls. Google's
+  guidance treats user-directed transfers to the user's own service as
+  outside "collection", but if in doubt declare *App activity → Other
+  actions* as **collected, optional, not shared**, purpose *App
+  functionality*.
+- The **Cast SDK** (Google Play services) is a third-party SDK: check its
+  entry in Google's SDK Index / the Play SDK data-safety guidance and
+  mirror what it declares.
+- Podcast Index / Apple search: search terms only, no identifiers — not
+  collection.
+- The privacy policy (`docs/stepcast-privacy.md`) was updated for all of
+  the above.
+
 
 - Does your app collect or share any of the required user data types? **No**
 - Encrypted in transit? N/A (nothing collected)

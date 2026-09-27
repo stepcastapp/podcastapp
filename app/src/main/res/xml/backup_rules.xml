@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Settings/theme/stats survive backup: legacy sharedprefs plus the
-     DataStore files that replaced them (files/datastore/). Include-only
-     means everything else (episode database, downloaded audio) stays out —
+<!-- Settings/theme/stats survive backup: the DataStore files
+     (files/datastore/) plus the auto-maintained library snapshot
+     (files/cloud_backup/, see CloudLibrarySnapshot). Include-only means
+     everything else (episode database, downloaded audio) stays out —
      refetchable, and the DB can exceed the cloud quota, which would
-     silently drop EVERYTHING otherwise. -->
+     silently drop EVERYTHING otherwise. SharedPreferences are deliberately
+     NOT included: the only ones left are device-local caches (widget state,
+     appwidget ids, the notification watermark) whose episode ids point
+     into a database that is not restored. -->
 <full-backup-content>
-    <include domain="sharedpref" path="." />
     <include domain="file" path="datastore/" />
+    <include domain="file" path="cloud_backup/" />
 </full-backup-content>

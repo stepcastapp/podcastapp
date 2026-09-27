@@ -1,5 +1,6 @@
 package com.stepcast.app.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.os.Bundle
 import androidx.compose.ui.res.stringResource
 import com.stepcast.app.R
@@ -19,11 +20,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,20 @@ class MainActivity : ComponentActivity() {
     private var sharedFeedUrl: String? = null
     private val shareNonce = androidx.compose.runtime.mutableStateOf(0)
 
+    /** Bumped when a new-episodes notification asks for the inbox. */
+    private val openInboxNonce = androidx.compose.runtime.mutableStateOf(0)
+
+    private fun handleOpenInbox(intent: android.content.Intent?) {
+        if (intent?.action == ACTION_OPEN_INBOX) openInboxNonce.value++
+    }
+
+    /** Assistant: "play <show> on Stepcast". */
+    private fun handlePlayFromSearch(intent: android.content.Intent?) {
+        if (intent?.action != android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return
+        val query = intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty()
+        playerConnection.playFromSearch(query)
+    }
+
     private fun extractFeedUrl(intent: android.content.Intent?): String? {
         intent ?: return null
         return when (intent.action) {
@@ -77,7 +92,7 @@ class MainActivity : ComponentActivity() {
         val name = intent.getStringExtra("smartplay") ?: return
         sendBroadcast(
             android.content.Intent(
-                this, com.stepcast.app.playback.CommandReceiver::class.java
+                this, com.stepcast.app.playback.InternalCommandReceiver::class.java
             )
                 .setAction(
                     com.stepcast.app.playback.CommandReceiver.ACTION_START_SMART_PLAY
@@ -93,6 +108,8 @@ class MainActivity : ComponentActivity() {
             shareNonce.value++
         }
         handleSmartPlayShortcut(intent)
+        handleOpenInbox(intent)
+        handlePlayFromSearch(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -111,17 +128,12 @@ class MainActivity : ComponentActivity() {
                 shareNonce.value++
             }
             handleSmartPlayShortcut(intent)
+            handleOpenInbox(intent)
         }
-        com.stepcast.app.ui.theme.ThemePrefs.init(this)
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            registerForActivityResult(
-                androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-            ) { }.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
+        // notification permission is asked in context (see
+        // NotificationPermission), not cold on launch
         playerConnection = PlayerConnection(this, lifecycleScope)
+        if (savedInstanceState == null) handlePlayFromSearch(intent)
         setContent {
             // system bars must follow the APP theme, not the OS theme —
             // otherwise status-bar icons stay dark on our dark background
@@ -145,7 +157,9 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             StepcastTheme {
-                StepcastApp(playerConnection, sharedFeedUrl, shareNonce.value)
+                StepcastApp(
+                    playerConnection, sharedFeedUrl, shareNonce.value, openInboxNonce.value
+                )
             }
         }
     }
@@ -154,18 +168,24 @@ class MainActivity : ComponentActivity() {
         playerConnection.release()
         super.onDestroy()
     }
+
+    companion object {
+        /** New-episodes notification tap: open straight into the inbox. */
+        const val ACTION_OPEN_INBOX = "com.stepcast.app.OPEN_INBOX"
+    }
 }
 
 @Composable
 fun StepcastApp(
     player: PlayerConnection,
     sharedFeedUrl: String? = null,
-    shareNonce: Int = 0
+    shareNonce: Int = 0,
+    openInboxNonce: Int = 0
 ) {
     val navController = rememberNavController()
     val app = LocalContext.current.applicationContext as StepcastApplication
-    val playerState by player.state.collectAsState()
-    val queue by app.repository.queue.collectAsState(initial = emptyList())
+    val playerState by player.state.collectAsStateWithLifecycle()
+    val queue by app.repository.queue.collectAsStateWithLifecycle(initialValue = emptyList())
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     var playerExpanded by androidx.compose.runtime.saveable.rememberSaveable {
@@ -185,6 +205,12 @@ fun StepcastApp(
             navController.navigate("search") { launchSingleTop = true }
         }
     }
+    androidx.compose.runtime.LaunchedEffect(openInboxNonce) {
+        if (openInboxNonce > 0) {
+            playerExpanded = false
+            navController.navigate("inbox") { launchSingleTop = true }
+        }
+    }
     // the prefill is consumed once the user LEAVES search — reopening it
     // later must not resurrect a stale shared URL
     androidx.compose.runtime.LaunchedEffect(currentRoute) {
@@ -195,6 +221,48 @@ fun StepcastApp(
         }
     }
 
+    // tablets / unfolded foldables / landscape: a navigation rail on the
+    // side instead of the bottom bar (a two-item bar stretched across
+    // 900dp reads as broken, and the rail gives the content the height)
+    val wide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
+
+    val navColors = NavigationBarItemDefaults.colors(
+        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+    )
+    // child routes highlight the tab they were opened from, so
+    // the bottom bar always shows where you are
+    val queueOwned = currentRoute == "queue" ||
+        currentRoute == "downloads" ||
+        currentRoute == "history" ||
+        currentRoute?.startsWith("smartplay/") == true ||
+        // a podcast opened FROM a queue-owned screen keeps
+        // that tab lit (the route carries its origin)
+        (currentRoute?.startsWith("podcast/") == true &&
+            backStackEntry?.arguments?.getString("from") == "queue")
+    // save/restore instead of destroy/recreate, so each tab
+    // keeps its scroll position across switches; tapping the
+    // tab you're already on returns to that tab's root
+    fun goToTab(route: String) {
+        // nav taps land UNDER the player overlay — collapse it
+        playerExpanded = false
+        if (currentRoute == route) return
+        // deeper inside this tab's stack? pop back to its root
+        if (navController.popBackStack(route, inclusive = false)) {
+            return
+        }
+        navController.navigate(route) {
+            popUpTo(navController.graph.startDestinationId) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+    val railColors = androidx.compose.material3.NavigationRailItemDefaults.colors(
+        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+    )
     Scaffold(
         bottomBar = {
             Column {
@@ -207,68 +275,65 @@ fun StepcastApp(
                         onExpand = { playerExpanded = true }
                     )
                 }
-                NavigationBar {
-                    val navColors = NavigationBarItemDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    // child routes highlight the tab they were opened from, so
-                    // the bottom bar always shows where you are
-                    val queueOwned = currentRoute == "queue" ||
-                        currentRoute == "downloads" ||
-                        currentRoute == "history" ||
-                        currentRoute?.startsWith("smartplay/") == true ||
-                        // a podcast opened FROM a queue-owned screen keeps
-                        // that tab lit (the route carries its origin)
-                        (currentRoute?.startsWith("podcast/") == true &&
-                            backStackEntry?.arguments?.getString("from") == "queue")
-                    // save/restore instead of destroy/recreate, so each tab
-                    // keeps its scroll position across switches; tapping the
-                    // tab you're already on returns to that tab's root
-                    fun goToTab(route: String) {
-                        // nav taps land UNDER the player overlay — collapse it
-                        playerExpanded = false
-                        if (currentRoute == route) return
-                        // deeper inside this tab's stack? pop back to its root
-                        if (navController.popBackStack(route, inclusive = false)) {
-                            return
-                        }
-                        navController.navigate(route) {
-                            popUpTo(navController.graph.startDestinationId) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
-                    NavigationBarItem(
-                        selected = currentRoute != null && !queueOwned,
-                        onClick = { goToTab("home") },
-                        icon = { Icon(Icons.Rounded.Home, contentDescription = stringResource(R.string.library)) },
-                        colors = navColors
-                    )
-                    NavigationBarItem(
-                        selected = queueOwned,
-                        onClick = { goToTab("queue") },
-                        icon = {
-                            BadgedBox(badge = {
-                                if (queue.isNotEmpty()) {
-                                    Badge { Text(queue.size.toString()) }
+                if (!wide) {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = currentRoute != null && !queueOwned,
+                            onClick = { goToTab("home") },
+                            icon = { Icon(Icons.Rounded.Home, contentDescription = stringResource(R.string.library)) },
+                            colors = navColors
+                        )
+                        NavigationBarItem(
+                            selected = queueOwned,
+                            onClick = { goToTab("queue") },
+                            icon = {
+                                BadgedBox(badge = {
+                                    if (queue.isNotEmpty()) {
+                                        Badge { Text(queue.size.toString()) }
+                                    }
+                                }) {
+                                    Icon(
+                                        Icons.AutoMirrored.Rounded.QueueMusic,
+                                        contentDescription = stringResource(R.string.up_next)
+                                    )
                                 }
-                            }) {
-                                Icon(
-                                    Icons.AutoMirrored.Rounded.QueueMusic,
-                                    contentDescription = stringResource(R.string.up_next)
-                                )
-                            }
-                        },
-                        colors = navColors
-                    )
+                            },
+                            colors = navColors
+                        )
+                    }
                 }
             }
         }
     ) { padding ->
-        androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
+        androidx.compose.foundation.layout.Row(Modifier.padding(padding)) {
+        if (wide) {
+            androidx.compose.material3.NavigationRail {
+                NavigationRailItem(
+                    selected = currentRoute != null && !queueOwned,
+                    onClick = { goToTab("home") },
+                    icon = { Icon(Icons.Rounded.Home, contentDescription = stringResource(R.string.library)) },
+                    colors = railColors
+                )
+                NavigationRailItem(
+                    selected = queueOwned,
+                    onClick = { goToTab("queue") },
+                    icon = {
+                        BadgedBox(badge = {
+                            if (queue.isNotEmpty()) {
+                                Badge { Text(queue.size.toString()) }
+                            }
+                        }) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.QueueMusic,
+                                contentDescription = stringResource(R.string.up_next)
+                            )
+                        }
+                    },
+                    colors = railColors
+                )
+            }
+        }
+        androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
         NavHost(
             navController = navController,
             startDestination = "home",
@@ -316,7 +381,8 @@ fun StepcastApp(
                     },
                     onOpenInbox = {
                         navController.navigate("inbox") { launchSingleTop = true }
-                    }
+                    },
+                    onPlayEpisode = { episode, podcast -> player.play(episode, podcast) }
                 )
             }
             composable("inbox") {
@@ -485,6 +551,7 @@ fun StepcastApp(
                 },
                 onDismiss = { playerExpanded = false }
             )
+        }
         }
         }
     }
