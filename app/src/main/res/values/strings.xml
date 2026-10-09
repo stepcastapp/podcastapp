@@ -648,4 +648,5 @@
     <string name="syncing">Syncing…</string>
     <string name="sync_last_ok">Last synced %1$s</string>
     <string name="sync_last_failed">Last sync failed: %1$s</string>
+    <string name="soundcloud_feed_empty">This artist hasn\'t made any tracks available as a podcast feed. SoundCloud only includes the tracks an artist opts into RSS.</string>
 </resources>

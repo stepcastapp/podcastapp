@@ -116,12 +116,15 @@ class PodcastRepository(
 
     /** Subscribes to a feed URL (or refreshes if already subscribed). Returns the podcast id. */
     suspend fun subscribe(
-        feedUrl: String,
+        rawFeedUrl: String,
         prefetched: ParsedFeed? = null,
         // Bulk imports (OPML) pass true so the whole back-catalog isn't
         // auto-downloaded at once; only later-arriving episodes will be.
         suppressBacklogAutoDownload: Boolean = false
     ): Long = withContext(Dispatchers.IO) {
+        // a SoundCloud page subscribes as its RSS feed (no-op for real feeds;
+        // a preview hands over the already-resolved URL)
+        val feedUrl = if (prefetched == null) resolveFeedUrl(rawFeedUrl) else rawFeedUrl
         // normalized match so an equivalent URL refreshes instead of duplicating
         val existingId = podcastIdForFeed(feedUrl)
         if (existingId != null) {
@@ -1759,6 +1762,38 @@ class PodcastRepository(
 
     suspend fun setSmartPlayContinuous(id: Long, continuous: Boolean) =
         db.smartPlayDao().setContinuous(id, continuous)
+
+    /**
+     * What the user pasted/shared → the URL to actually fetch and store.
+     * Ordinary feed URLs pass straight through (no network). A SoundCloud
+     * artist page (or one of their tracks, or an on.soundcloud.com short
+     * link) becomes that artist's public RSS feed — see [SoundCloudFeeds].
+     * Throws with a readable message when a SoundCloud page has no artist.
+     */
+    suspend fun resolveFeedUrl(url: String): String = withContext(Dispatchers.IO) {
+        val trimmed = url.trim()
+        var page = trimmed
+        if (SoundCloudFeeds.isShortLink(page)) {
+            // follow the share link's redirect to the real page
+            page = http.newCall(Request.Builder().url(page).build()).execute()
+                .use { it.request.url.toString() }
+        }
+        if (!SoundCloudFeeds.isSoundCloudPage(page)) return@withContext trimmed
+        val profile = SoundCloudFeeds.profileUrl(page)
+            ?: throw IOException("That SoundCloud link isn't an artist page")
+        val html = http.newCall(
+            // the desktop page carries the app-link tag with the user id
+            Request.Builder().url(profile)
+                .header("User-Agent", "Mozilla/5.0 (Android) ${Http.USER_AGENT}")
+                .build()
+        ).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("SoundCloud: HTTP ${response.code}")
+            response.body?.string().orEmpty()
+        }
+        val id = SoundCloudFeeds.userIdIn(html)
+            ?: throw IOException("Couldn't find this artist on SoundCloud")
+        SoundCloudFeeds.feedUrlFor(id)
+    }
 
     /** Fetches and parses a feed WITHOUT subscribing — the Discover preview. */
     suspend fun previewFeed(feedUrl: String): ParsedFeed =

@@ -493,7 +493,7 @@ fun StepcastApp(
             ) { entry ->
                 val feedUrl = entry.arguments?.getString("feedUrl") ?: return@composable
                 com.stepcast.app.ui.screens.PodcastPreviewScreen(
-                    feedUrl = feedUrl,
+                    requestedUrl = feedUrl,
                     repository = app.repository,
                     player = player,
                     onSubscribed = {

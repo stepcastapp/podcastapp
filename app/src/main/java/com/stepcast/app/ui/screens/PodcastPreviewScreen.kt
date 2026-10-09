@@ -68,12 +68,16 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun PodcastPreviewScreen(
-    feedUrl: String,
+    requestedUrl: String,
     repository: PodcastRepository,
     player: PlayerConnection,
     onSubscribed: (Long) -> Unit,
     onOpenPodcast: (Long) -> Unit
 ) {
+    // what was pasted/shared may be a SoundCloud artist page: resolved to
+    // the real feed URL first, and EVERYTHING below (already-subscribed
+    // check, subscribe, share, save) uses the resolved one
+    var feedUrl by remember(requestedUrl) { mutableStateOf(requestedUrl) }
     var feed by remember { mutableStateOf<ParsedFeed?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var existingId by remember { mutableStateOf<Long?>(null) }
@@ -94,10 +98,16 @@ fun PodcastPreviewScreen(
     val savedMsg = stringResource(R.string.episode_saved_to_up_next)
     val saveFailedMsg = stringResource(R.string.couldnt_save_episode)
 
-    LaunchedEffect(feedUrl, retryNonce) {
+    LaunchedEffect(requestedUrl, retryNonce) {
         error = null
-        existingId = repository.podcastIdForFeed(feedUrl)
-        runCatching { repository.previewFeed(feedUrl) }
+        val resolved = runCatching { repository.resolveFeedUrl(requestedUrl) }
+            .getOrElse {
+                error = it.message
+                return@LaunchedEffect
+            }
+        feedUrl = resolved
+        existingId = repository.podcastIdForFeed(resolved)
+        runCatching { repository.previewFeed(resolved) }
             .onSuccess {
                 feed = it
                 // same show subscribed under a different feed URL entirely
@@ -280,6 +290,24 @@ fun PodcastPreviewScreen(
             )
 
             LazyColumn(Modifier.fillMaxSize()) {
+                if (loaded.episodes.isEmpty()) {
+                    item {
+                        Text(
+                            stringResource(
+                                // a SoundCloud feed only carries tracks the
+                                // artist opted into RSS — often none
+                                if (com.stepcast.app.data.SoundCloudFeeds.isFeedUrl(feedUrl)) {
+                                    R.string.soundcloud_feed_empty
+                                } else {
+                                    R.string.no_episodes_yet
+                                }
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                }
                 // positional keys: preview feeds can carry blank/duplicate guids
                 items(loaded.episodes.take(30)) { ep ->
                     Row(

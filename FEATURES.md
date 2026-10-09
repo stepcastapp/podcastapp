@@ -87,6 +87,12 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   duplicating.
 - Share-target and `podcast://`/`feed://` scheme intents land in Discover
   with the URL prefilled.
+- **SoundCloud artists**: paste or share a SoundCloud artist link (their
+  profile, one of their tracks, or an `on.soundcloud.com` share link) and
+  it opens as that artist's public podcast feed — preview, subscribe,
+  download and sync like any show. SoundCloud only includes the tracks an
+  artist opted into RSS (often their mixes/shows, sometimes none); an
+  empty feed says so instead of showing a blank show.
 - **Local-folder virtual podcasts**: point Stepcast at a folder of audio
   files (Search → Add local folder); it becomes a subscription whose
   refresh rescans the folder. Episode duration AND embedded artwork are
