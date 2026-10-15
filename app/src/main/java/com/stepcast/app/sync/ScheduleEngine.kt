@@ -122,9 +122,18 @@ object ScheduleEngine {
                             )
                         )
                     }
-                    expectedReleaseMs
-                        ?.takeIf { it + RELEASE_WINDOW_MS >= nowMs }
-                        ?.let { add(NextCheck(maxOf(it, nowMs), Reason.RELEASE)) }
+                    // Same rule as isDue: inside the release window, but
+                    // not sooner than RELEASE_RECHECK_MS after the last
+                    // refresh. Offering "now" while isDue said "too soon"
+                    // pinned the planner to its 5-minute floor — a field
+                    // journal showed a wake-up every 5 minutes for three
+                    // days, each one a run with nothing due.
+                    expectedReleaseMs?.let { expected ->
+                        val at = maxOf(expected, lastRefreshedMs + RELEASE_RECHECK_MS, nowMs)
+                        if (at <= expected + RELEASE_WINDOW_MS) {
+                            add(NextCheck(at, Reason.RELEASE))
+                        }
+                    }
                     add(NextCheck(lastRefreshedMs + BASELINE_MS, Reason.BASELINE))
                 }
                 candidates.minByOrNull { it.timeMs }

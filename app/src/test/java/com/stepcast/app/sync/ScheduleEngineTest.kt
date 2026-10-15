@@ -218,4 +218,38 @@ class ScheduleEngineTest {
         assertEquals(at(9, 7), next?.timeMs)
         assertEquals(ScheduleEngine.Reason.DAILY, next?.reason)
     }
+
+    @Test
+    fun `release check never lands before isDue would allow it`() {
+        // refreshed 10 minutes ago, inside an expected release window: the
+        // planner used to say "now" while isDue said "too soon" — a wake-up
+        // every 5 minutes with nothing to do
+        val expected = at(8, 9, 0)
+        val last = at(8, 9, 50)
+        val now = at(8, 10, 0)
+        assertFalse(
+            ScheduleEngine.isDue(ScheduleEngine.MODE_AUTO, 0, last, expected, now, noQuiet, utc)
+        )
+        val next = ScheduleEngine.nextCheck(
+            ScheduleEngine.MODE_AUTO, 0, last, expected, now, noQuiet, utc
+        )!!
+        assertEquals(ScheduleEngine.Reason.RELEASE, next.reason)
+        assertEquals(last + ScheduleEngine.RELEASE_RECHECK_MS, next.timeMs)
+        // and at that moment the check really is due
+        assertTrue(
+            ScheduleEngine.isDue(
+                ScheduleEngine.MODE_AUTO, 0, last, expected, next.timeMs, noQuiet, utc
+            )
+        )
+    }
+
+    @Test
+    fun `no release check once the recheck falls outside the window`() {
+        val expected = at(8, 9, 0)
+        val last = at(8, 11, 30) // recheck at 12:20, window closes 12:00
+        val next = ScheduleEngine.nextCheck(
+            ScheduleEngine.MODE_AUTO, 0, last, expected, at(8, 11, 40), noQuiet, utc
+        )!!
+        assertTrue(next.reason != ScheduleEngine.Reason.RELEASE)
+    }
 }

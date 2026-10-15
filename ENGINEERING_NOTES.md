@@ -213,7 +213,28 @@ build or one confused on-device session.
 
 ## WorkManager / downloads
 
-- **Never call `setForeground` per progress tick.** Each call dispatches a
+- **Downloads do NOT use a foreground service any more (Oct 2026).**
+  WorkManager's `SystemForegroundService` (setForeground / expedited work
+  below Android 12) crashed the app on Android 14+ with
+  `ForegroundServiceDidNotStartInTimeException`: WorkManager calls
+  `startForegroundService`, Android then REFUSES `startForeground` (the
+  dataSync daily time budget, background-start rules), WorkManager catches
+  and logs that refusal — and the OS kills the process for never calling
+  it. Every download attempt crashed the app; nothing finished. Now:
+  plain `notify()` progress notifications (cancelled by the worker
+  itself), expedited only on 12+ (a JobScheduler job there), and resumable
+  `.part` files so a run the OS cuts off continues next time. No
+  `FOREGROUND_SERVICE_DATA_SYNC` in the manifest. Don't reintroduce
+  setForeground for downloads. Download outcomes are journaled on the
+  schedule channel (`dl-start` / `dl-done` / `dl-retry` / `dl-fail` /
+  `dl-stop`).
+- **The planner must never offer a time `isDue` would reject.** A RELEASE
+  candidate of "now" while `isDue` demanded 50 minutes since the last
+  refresh pinned the planner to its 5-minute floor for days. Every
+  `nextCheck` candidate follows the same rule as `isDue`.
+
+- (Historical, before downloads dropped the foreground service:)
+  **Never call `setForeground` per progress tick.** Each call dispatches a
   start command to WorkManager's shared `SystemForegroundService`; with
   parallel downloads finishing (stopping that service), a late command
   lands during teardown, `startForeground` never runs, and the OS kills

@@ -128,3 +128,12 @@ a screen recording is ideal.
 - [ ] Download storage limit: set 1 GB, downloads beyond it remove played
       downloads first, then fail with a reason; SD-card option on a phone
       with a card
+
+## Download crash fix (Oct 2026)
+- [ ] Tap Download on several episodes with the app open: progress
+      notifications appear, files finish, no crash
+- [ ] Start a long download, press Home and wait 15+ minutes: it either
+      finishes or resumes (journal: `dl-stop` then `dl-start`/`dl-done`),
+      never a crash report
+- [ ] Share journal after a day: no runs of `plan next in 5min` with
+      `due=0` back to back

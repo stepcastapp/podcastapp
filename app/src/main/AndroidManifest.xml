@@ -7,7 +7,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".StepcastApplication"
@@ -194,11 +193,9 @@
                 android:resource="@xml/stepcast_widget_smartplays_info" />
         </receiver>
 
-        <!-- WorkManager's foreground service hosts download notifications -->
-        <service
-            android:name="androidx.work.impl.foreground.SystemForegroundService"
-            android:foregroundServiceType="dataSync"
-            tools:node="merge" />
+        <!-- No dataSync foreground service: downloads post plain progress
+             notifications (see DownloadWorker) — WorkManager's
+             SystemForegroundService crashed the app on Android 14+ -->
 
         <!-- shares diagnostic files (journal, crash log) as content:// URIs;
              big text can't ride inside a share intent (binder size limit —
