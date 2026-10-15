@@ -55,6 +55,12 @@ the app does not compile locally. The loop:
 
 ## Rules
 
+- **Always merge to main.** The owner's standing instruction: once a
+  change is pushed and its branch CI is green, open a PR into `main` and
+  merge it (that updates `stepcast-latest`, the daily-driver install) —
+  don't stop at the branch and ask. Then confirm the main build and the
+  release page ("Current: <sha>").
+
 - No code, assets, or names from any decompiled app may ever be added.
   Features are re-implemented from behavior only.
 - Room schema changes need real migrations (see StepcastDatabase.kt for
