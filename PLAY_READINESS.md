@@ -106,15 +106,13 @@ alias.)
    answers" below).
 5. **Foreground service declaration** (App content → Foreground service
    permissions). Required because targetSdk ≥ 34 and the manifest declares
-   two FGS types. Answer per type, and attach a short screen recording
+   a foreground service type. Answer per type, and attach a short screen recording
    (a phone recording uploaded as an unlisted YouTube link is fine):
    - `mediaPlayback` → "Media playback": podcast audio keeps playing
      with the screen off / app backgrounded. Video: start an episode,
      lock the phone, show the lock-screen media card while it plays.
-   - `dataSync` → "Network transfer / downloads": user-requested and
-     rule-driven episode downloads run as a visible, cancellable progress
-     notification (WorkManager's foreground service). Video: tap Download
-     on an episode, pull down the shade to show the progress notification.
+   (Only `mediaPlayback` now — downloads stopped using a `dataSync`
+   foreground service in Oct 2026, so there's nothing else to declare.)
 6. Content rating questionnaire: podcast player; the UGC questions —
    plays user-selected third-party feeds, no user-to-user content, no
    moderation needed → normally passes for players. Target audience 13+

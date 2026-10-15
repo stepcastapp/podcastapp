@@ -3,7 +3,6 @@ package com.stepcast.app.download
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ForegroundInfo
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -13,6 +12,7 @@ import androidx.work.workDataOf
 import com.stepcast.app.StepcastApplication
 import com.stepcast.app.data.AppSettings
 import com.stepcast.app.data.Episode
+import com.stepcast.app.data.PlaybackJournal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,35 +45,39 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         val repository = app.repository
         val episode = repository.episode(episodeId) ?: return@withContext Result.failure()
 
-        // visible, OS-protected download: a progress notification via
-        // WorkManager's foreground service (may be denied when started
-        // from the background on 12+ — then we just download quietly).
-        // Promote ONCE — every setForeground call dispatches another start
-        // command to WorkManager's shared SystemForegroundService, and with
-        // parallel downloads finishing (which stops that service) a late
-        // command can land during teardown, where startForeground never
-        // runs and the OS kills the app with
-        // ForegroundServiceDidNotStartInTimeException. Progress after the
-        // promotion goes through plain notify() on the same id.
-        val promoted =
-            runCatching { setForeground(foregroundInfo(episode.title, 0)) }.isSuccess
-        // up to two downloads stream at once (the gate), which used to mean
-        // two separate progress notifications — group them under one summary
-        // so the shade shows a single "Downloading" stack
-        if (promoted) {
+        // A plain progress notification — deliberately NOT a foreground
+        // service. Promoting through WorkManager's SystemForegroundService
+        // crashed the app on Android 14+ (field crash, Oct 2026:
+        // ForegroundServiceDidNotStartInTimeException): WorkManager starts
+        // the service, but when Android then refuses startForeground (the
+        // dataSync time budget, a background start) WorkManager swallows
+        // that refusal, never calls startForeground, and the OS kills the
+        // whole process — every download attempt took the app down with it
+        // and nothing ever finished. Downloads don't need the service:
+        // tapped ones run as expedited jobs, rule-driven ones as normal
+        // work, and a run the OS cuts short resumes from its .part file.
+        val notify = com.stepcast.app.ui.NotificationPermission.granted(applicationContext)
+        if (notify) {
             downloadsShowing.incrementAndGet()
-            runCatching { postGroupSummary() }
+            runCatching {
+                postGroupSummary()
+                updateProgressNotification(episode.title, 0)
+            }
         }
+        PlaybackJournal.logSchedule("dl-start", "ep=$episodeId attempt=$runAttemptCount")
 
         val file = fileFor(applicationContext, episode)
         try {
-            downloadBody(episodeId, episode, file, promoted)
+            downloadBody(episodeId, episode, file, notify)
         } finally {
-            if (promoted && downloadsShowing.decrementAndGet() <= 0) {
+            // no foreground service to tear it down: the progress
+            // notification is ours to remove, whatever the outcome
+            if (notify) {
                 runCatching {
-                    applicationContext
+                    val nm = applicationContext
                         .getSystemService(android.app.NotificationManager::class.java)
-                        ?.cancel(SUMMARY_NOTIFICATION_ID)
+                    nm?.cancel(notificationId)
+                    if (downloadsShowing.decrementAndGet() <= 0) nm?.cancel(SUMMARY_NOTIFICATION_ID)
                 }
             }
         }
@@ -83,7 +87,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         episodeId: Long,
         episode: Episode,
         file: File,
-        promoted: Boolean
+        notify: Boolean
     ): Result = withContext(Dispatchers.IO) {
         val repository = (applicationContext as StepcastApplication).repository
         // Resumable: bytes land in a .part file that survives a failed or
@@ -163,7 +167,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                     episodeId,
                     if (total > 0) ((startWritten * 100) / total).toInt().coerceAtLeast(1) else 1
                 )
-                if (total <= 0 && promoted) {
+                if (total <= 0 && notify) {
                     // no Content-Length: indeterminate is the honest bar
                     runCatching {
                         updateProgressNotification(episode.title, 0, indeterminate = true)
@@ -184,7 +188,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                                 if (pct >= lastPct + 5) {
                                     lastPct = pct
                                     repository.setDownloadProgress(episodeId, pct)
-                                    if (promoted) {
+                                    if (notify) {
                                         runCatching {
                                             updateProgressNotification(episode.title, pct)
                                         }
@@ -207,12 +211,18 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             if (!part.renameTo(file)) throw IOException("could not finalize ${file.name}")
             validator.delete()
             repository.setDownloaded(episodeId, file.absolutePath)
+            PlaybackJournal.logSchedule(
+                "dl-done", "ep=$episodeId bytes=$written resumedFrom=$startWritten"
+            )
             Result.success()
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 // a user cancel discards the partial; a SYSTEM stop (10-minute
                 // limit, lost Wi-Fi) keeps it — WorkManager reschedules and
                 // the next run resumes instead of starting over
+                PlaybackJournal.logSchedule(
+                    "dl-stop", "ep=$episodeId reason=$stopReason at=$written"
+                )
                 if (stopReason == androidx.work.WorkInfo.STOP_REASON_CANCELLED_BY_APP) {
                     part.delete()
                     validator.delete()
@@ -229,8 +239,14 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             if (retryable &&
                 (runAttemptCount < 2 || (madeProgress && runAttemptCount < MAX_RESUMING_ATTEMPTS))
             ) {
+                PlaybackJournal.logSchedule(
+                    "dl-retry", "ep=$episodeId attempt=$runAttemptCount at=$written: ${e.message}"
+                )
                 Result.retry()
             } else {
+                PlaybackJournal.logSchedule(
+                    "dl-fail", "ep=$episodeId attempt=$runAttemptCount: ${e.message}"
+                )
                 part.delete()
                 validator.delete()
                 // terminal for this enqueue — counts toward the auto-retry
@@ -239,14 +255,6 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                 Result.failure()
             }
         }
-    }
-
-    /** Expedited work needs this on pre-12 devices (it runs as a foreground service). */
-    override suspend fun getForegroundInfo(): ForegroundInfo {
-        val id = inputData.getLong(KEY_EPISODE_ID, -1)
-        val title = (applicationContext as StepcastApplication).repository
-            .episode(id)?.title.orEmpty()
-        return foregroundInfo(title, 0)
     }
 
     private val notificationId: Int
@@ -301,20 +309,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         nm.notify(SUMMARY_NOTIFICATION_ID, summary)
     }
 
-    private fun foregroundInfo(title: String, progress: Int): ForegroundInfo {
-        val notification = buildNotification(title, progress)
-        return if (android.os.Build.VERSION.SDK_INT >= 29) {
-            ForegroundInfo(
-                notificationId,
-                notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            ForegroundInfo(notificationId, notification)
-        }
-    }
-
-    /** Post-promotion progress: plain notify on the id setForeground used. */
+    /** Progress: a plain notify() on this download's own id. */
     private fun updateProgressNotification(
         title: String,
         progress: Int,
@@ -366,9 +361,9 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             context: Context,
             episodeId: Long,
             allowMetered: Boolean = false,
-            // user taps run expedited: they may go foreground from the
-            // background and aren't cut off at ten minutes. Rule-driven
-            // auto-downloads pass false (expedited quota is small).
+            // user taps run expedited (start right away, even with the app
+            // backgrounded). Rule-driven auto-downloads pass false
+            // (expedited quota is small).
             userInitiated: Boolean = true
         ) {
             val app = context.applicationContext as StepcastApplication
@@ -392,7 +387,11 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                     androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
                 )
                 .apply {
-                    if (userInitiated) {
+                    // Android 12+ only: there an expedited request is a
+                    // JobScheduler job. Below 12 WorkManager implements it
+                    // with the same foreground service this worker no
+                    // longer uses (see downloadInternal).
+                    if (userInitiated && android.os.Build.VERSION.SDK_INT >= 31) {
                         setExpedited(
                             androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST
                         )

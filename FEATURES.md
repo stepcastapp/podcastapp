@@ -214,8 +214,9 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   stopping a long background download) resumes where it stopped instead
   of starting over (`Range` + `If-Range`, so a changed file restarts
   cleanly); attempts that make progress keep retrying. Tapped downloads
-  run as expedited work; a download that won't fit (keeping 200 MB free)
-  fails up front.
+  start right away (expedited work on Android 12+); a download that won't
+  fit (keeping 200 MB free) fails up front. Progress shows as an ordinary
+  notification (no foreground service).
 - Per-row and bulk retry / dismiss / cancel; **auto-retry gives up after
   3 failed attempts** so dead enclosures stop reappearing; manual retry
   always allowed; orphaned in-flight downloads recover on app start.
