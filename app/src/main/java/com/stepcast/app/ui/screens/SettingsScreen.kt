@@ -92,6 +92,10 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var recapOpen by remember { mutableStateOf(false) }
+    var plannerOpen by remember { mutableStateOf(false) }
+    if (plannerOpen) {
+        StoragePlannerDialog(repository = repository, onDismiss = { plannerOpen = false })
+    }
     val requestNotifications = com.stepcast.app.ui.rememberNotificationPermissionRequest()
     if (recapOpen) {
         RecapDialog(repository = repository, onDismiss = { recapOpen = false })
@@ -657,6 +661,11 @@ fun SettingsScreen(
             value = AppSettings.downloadCapGb,
             hint = stringResource(R.string.download_storage_limit_hint),
             onCommit = { AppSettings.setDownloadCapGb(context, it) }
+        )
+        ActionRow(
+            label = stringResource(R.string.storage_planner),
+            hint = stringResource(R.string.storage_planner_hint),
+            onClick = { plannerOpen = true }
         )
         if (com.stepcast.app.download.DownloadStorage.hasRemovable(context) ||
             AppSettings.downloadsOnSdCard

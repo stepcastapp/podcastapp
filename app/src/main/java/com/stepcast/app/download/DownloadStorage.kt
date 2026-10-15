@@ -39,4 +39,31 @@ object DownloadStorage {
 
     /** The user's cap in bytes; 0 = unlimited. */
     fun capBytes(): Long = AppSettings.downloadCapGb.toLong() * 1024 * 1024 * 1024
+
+    @Volatile private var cachedUsed = 0L
+    @Volatile private var cachedAtMs = 0L
+
+    /** [usedBytes], walked at most once a minute (refresh asks per feed). */
+    fun usedBytesCached(context: Context): Long {
+        val now = System.currentTimeMillis()
+        if (now - cachedAtMs > 60_000L) {
+            cachedUsed = usedBytes(context)
+            cachedAtMs = now
+        }
+        return cachedUsed
+    }
+
+    /** Forget the cached figure (after deleting or finishing downloads). */
+    fun invalidate() {
+        cachedAtMs = 0L
+    }
+
+    /**
+     * Automatic downloads are paused: a limit is set and downloads already
+     * fill it. The limit never blocks a download the user tapped.
+     */
+    fun autoPausedByLimit(context: Context): Boolean {
+        val cap = capBytes()
+        return cap > 0 && usedBytesCached(context) >= cap
+    }
 }
