@@ -1,5 +1,6 @@
 package com.stepcast.app.ui.screens
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -123,6 +124,42 @@ fun DownloadsScreen(repository: PodcastRepository) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 16.dp)
         )
+
+        // the storage limit pausing automatic downloads is otherwise
+        // invisible — say so, with the numbers and a way to fix it
+        var limitState by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+        var plannerOpen by remember { mutableStateOf(false) }
+        LaunchedEffect(activity.size) {
+            limitState = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val cap = com.stepcast.app.download.DownloadStorage.capBytes()
+                val used = com.stepcast.app.download.DownloadStorage.usedBytes(context)
+                if (cap > 0 && used >= cap) cap to used else null
+            }
+        }
+        limitState?.let { (cap, used) ->
+            androidx.compose.material3.Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        stringResource(
+                            R.string.downloads_paused_by_limit,
+                            gbLabel(cap), gbLabel(used)
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    TextButton(onClick = { plannerOpen = true }) {
+                        Text(stringResource(R.string.storage_planner))
+                    }
+                }
+            }
+        }
+        if (plannerOpen) {
+            StoragePlannerDialog(repository = repository, onDismiss = { plannerOpen = false })
+        }
 
         // bulk actions — the interesting one is the Wi-Fi override
         Row(Modifier.padding(start = 8.dp)) {
@@ -369,3 +406,5 @@ private fun DownloadRow(
         }
     }
 }
+
+private fun gbLabel(bytes: Long): String = "%.1f GB".format(bytes / 1_073_741_824.0)

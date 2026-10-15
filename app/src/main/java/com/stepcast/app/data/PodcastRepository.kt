@@ -252,7 +252,9 @@ class PodcastRepository(
                 .filter { it.downloadAttempts < Episode.MAX_AUTO_DOWNLOAD_ATTEMPTS }
                 .take(podcast.keepDownloads)
                 .filter { it.downloadStatus == Episode.DOWNLOAD_NONE }
-                .forEach { DownloadWorker.start(appContext, it.id, userInitiated = false) }
+                .toList()
+                .takeIf { it.isNotEmpty() && !com.stepcast.app.download.DownloadStorage.autoPausedByLimit(appContext) }
+                ?.forEach { DownloadWorker.start(appContext, it.id, userInitiated = false) }
             episodes.filter { it.isDownloaded && it.played }
                 .forEach { deleteDownload(it.id) }
         }
@@ -1351,6 +1353,7 @@ class PodcastRepository(
             runCatching { File(path).delete() }
         }
         db.episodeDao().clearDownload(episodeId)
+        com.stepcast.app.download.DownloadStorage.invalidate()
     }
 
     /** Saves category-level retention defaults and applies them to every member podcast. */
@@ -1403,6 +1406,70 @@ class PodcastRepository(
         }
         freed
     }
+
+    // ---- storage planner ----------------------------------------------------
+
+    /** Everything [StoragePlanner] needs, for every subscribed show. */
+    suspend fun storagePlan(): StoragePlanner.Plan = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val shows = db.podcastDao().listSubscribed().filter { it.localFolderUri == null }
+        val listening = db.episodeDao()
+            .listeningByPodcast(now - StoragePlanner.RATE_DAYS * 86_400_000L)
+            .associateBy { it.podcastId }
+        val queued = db.queueDao().queueSnapshot().mapTo(HashSet()) { it.id }
+        val filesByShow = db.episodeDao().downloadedRows().groupBy { it.podcastId }
+        val planShows = shows.map { show ->
+            val files = filesByShow[show.id].orEmpty().mapNotNull { row ->
+                val bytes = File(row.localFilePath).length().takeIf { it > 0 } ?: return@mapNotNull null
+                StoragePlanner.DownloadedFile(
+                    episodeId = row.id,
+                    bytes = bytes,
+                    pubDateMs = row.pubDateMs,
+                    played = row.played,
+                    protected = row.id in queued || row.positionMs > 0 || row.favorite
+                )
+            }
+            val (typical, estimate) = StoragePlanner.typicalSize(
+                files.map { it.bytes },
+                if (files.isEmpty() && show.keepDownloads > 0) {
+                    db.episodeDao().recentDurations(show.id)
+                } else {
+                    emptyList()
+                }
+            )
+            val l = listening[show.id]
+            StoragePlanner.Show(
+                podcastId = show.id,
+                title = show.title,
+                keepDownloads = show.keepDownloads,
+                maxAgeDays = show.maxAgeDays,
+                typicalEpisodeBytes = typical,
+                sizeIsEstimate = estimate,
+                downloads = files,
+                lastListenedMs = maxOf(l?.lastPlayedAtMs ?: 0L, l?.lastListenedMs ?: 0L),
+                finishedRecently = l?.finishedSince ?: 0
+            )
+        }
+        StoragePlanner.plan(
+            planShows,
+            com.stepcast.app.download.DownloadStorage.capBytes(),
+            now
+        )
+    }
+
+    /** Applies one planner suggestion: the new rule, then the surplus files. */
+    suspend fun applyStorageSuggestion(s: StoragePlanner.Suggestion) = withContext(Dispatchers.IO) {
+        db.podcastDao().updateRetention(s.show.podcastId, s.newKeep, s.show.maxAgeDays)
+        s.removeNow.forEach { deleteDownload(it.episodeId) }
+        PlaybackJournal.logSchedule(
+            "storage-plan",
+            "${s.kind} ${s.show.title}: keep ${s.show.keepDownloads}->${s.newKeep} " +
+                "removed=${s.removeNow.size}"
+        )
+    }
+
+    /** One-time repair, see [EpisodeDao.resetSingleFailures]. */
+    suspend fun resetSingleFailures(): Int = db.episodeDao().resetSingleFailures()
 
     /** Deletes every downloaded file for one podcast. */
     suspend fun deleteDownloadsForPodcast(podcastId: Long) {

@@ -140,10 +140,14 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                 if (!resuming) {
                     if (newValidator != null) validator.writeText(newValidator) else validator.delete()
                 }
-                // the user's storage limit: make room from PLAYED downloads
-                // first; an episode that still won't fit fails with a reason
+                // The storage limit governs AUTOMATIC downloads only (as in
+                // AntennaPod): make room from PLAYED downloads first; an
+                // auto-download that still won't fit is skipped — not failed,
+                // so it isn't marked dead. A download the user tapped always
+                // goes ahead.
                 val cap = DownloadStorage.capBytes()
-                if (cap > 0 && total > 0) {
+                val userInitiated = inputData.getBoolean(KEY_USER_INITIATED, true)
+                if (cap > 0 && total > 0 && !userInitiated) {
                     val need = total - startWritten
                     if (DownloadStorage.usedBytes(applicationContext) + need > cap) {
                         repository.freeSpaceFromPlayedDownloads(
@@ -151,7 +155,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                         )
                     }
                     if (DownloadStorage.usedBytes(applicationContext) + need > cap) {
-                        throw NoRoomException("download storage limit reached")
+                        throw LimitSkipException()
                     }
                 }
                 // don't start a download the disk can't hold (keep 200 MB spare)
@@ -211,9 +215,18 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
             if (!part.renameTo(file)) throw IOException("could not finalize ${file.name}")
             validator.delete()
             repository.setDownloaded(episodeId, file.absolutePath)
+            DownloadStorage.invalidate()
             PlaybackJournal.logSchedule(
                 "dl-done", "ep=$episodeId bytes=$written resumedFrom=$startWritten"
             )
+            Result.success()
+        } catch (e: LimitSkipException) {
+            // back to "not downloaded": eligible again once there's room
+            withContext(NonCancellable) {
+                if (!part.exists() || part.length() == 0L) validator.delete()
+                repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_NONE)
+            }
+            PlaybackJournal.logSchedule("dl-skip", "ep=$episodeId: automatic downloads paused by the storage limit")
             Result.success()
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
@@ -330,6 +343,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
         private val downloadsShowing = java.util.concurrent.atomic.AtomicInteger(0)
 
         const val KEY_EPISODE_ID = "episodeId"
+        const val KEY_USER_INITIATED = "userInitiated"
 
         // shared pool/cache with the rest of the app; downloads just wait longer
         private val http: OkHttpClient get() = com.stepcast.app.data.Http.downloads
@@ -371,7 +385,9 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
                 app.repository.setDownloadStatus(episodeId, Episode.DOWNLOAD_RUNNING)
             }
             val request = OneTimeWorkRequestBuilder<DownloadWorker>()
-                .setInputData(workDataOf(KEY_EPISODE_ID to episodeId))
+                .setInputData(
+                    workDataOf(KEY_EPISODE_ID to episodeId, KEY_USER_INITIATED to userInitiated)
+                )
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(
@@ -458,5 +474,8 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) :
     }
 }
 
-/** Storage limit or disk full — terminal for this attempt, never retried. */
+/** Disk full — terminal for this attempt, never retried. */
 private class NoRoomException(message: String) : IOException(message)
+
+/** An automatic download skipped because the storage limit is full. */
+private class LimitSkipException : IOException("automatic downloads paused by the storage limit")

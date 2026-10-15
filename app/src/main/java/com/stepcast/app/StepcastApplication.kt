@@ -46,6 +46,12 @@ class StepcastApplication : Application(), coil.ImageLoaderFactory {
             // the v24 upgrade creates the show-notes search index empty;
             // fill it once, off the launch path (new rows index themselves)
             val flags = getSharedPreferences("stepcast_flags", MODE_PRIVATE)
+            // the storage limit used to record its refusals as FAILED
+            // downloads, which auto-download then skipped for good
+            if (!flags.getBoolean("limitFailuresReset", false)) {
+                runCatching { repository.resetSingleFailures() }
+                    .onSuccess { flags.edit().putBoolean("limitFailuresReset", true).apply() }
+            }
             if (!flags.getBoolean("ftsBuilt", false)) {
                 runCatching { repository.rebuildSearchIndex() }
                     .onSuccess { flags.edit().putBoolean("ftsBuilt", true).apply() }

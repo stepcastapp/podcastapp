@@ -628,9 +628,9 @@
     <string name="notif_permission_body">Stepcast can send a short alert when your shows publish — batched around your Fresh-by times, not after every check. You can change this any time in Settings.</string>
     <string name="allow">Allow</string>
     <string name="not_now">Not now</string>
-    <string name="download_storage_limit">Download storage limit</string>
+    <string name="download_storage_limit">Total download storage limit</string>
     <string name="gigabytes">GB</string>
-    <string name="download_storage_limit_hint">0 = no limit. When full, played downloads are removed first; unplayed ones are never deleted to make room</string>
+    <string name="download_storage_limit_hint">For all shows together; 0 = no limit. Applies to automatic downloads only — when full, played downloads are removed first, then automatic downloads pause. Episodes you download yourself always go ahead</string>
     <string name="downloads_on_sd_card">Store downloads on SD card</string>
     <string name="downloads_on_sd_card_hint">New downloads only; existing files stay where they are. Falls back to phone storage if the card is removed</string>
     <string name="cast">Cast</string>
@@ -649,4 +649,22 @@
     <string name="sync_last_ok">Last synced %1$s</string>
     <string name="sync_last_failed">Last sync failed: %1$s</string>
     <string name="soundcloud_feed_empty">This artist hasn\'t made any tracks available as a podcast feed. SoundCloud only includes the tracks an artist opts into RSS.</string>
+    <string name="storage_planner">Storage planner</string>
+    <string name="storage_planner_hint">What your download rules need versus your limit, and where listening history says you can save space</string>
+    <string name="planner_using">Using %1$s for downloads</string>
+    <string name="planner_rules_need">Your auto-download rules plan about %1$s</string>
+    <string name="planner_limit">Limit: %1$s</string>
+    <string name="planner_no_limit">No storage limit set</string>
+    <string name="planner_status_paused">Automatic downloads are paused: the limit is full.</string>
+    <string name="planner_status_will_fill">Your rules plan more than the limit, so automatic downloads will pause before every show gets its episodes.</string>
+    <string name="planner_no_suggestions">No changes suggested — your rules match what you listen to.</string>
+    <string name="planner_if_all">Applying everything below brings your rules to about %1$s.</string>
+    <string name="planner_reason_stale">Last listened %1$s</string>
+    <string name="planner_reason_never">Never listened</string>
+    <string name="planner_reason_rate">You finished %1$d in the last %2$d days but keep %3$d</string>
+    <string name="planner_action_stop">Stop auto-downloading</string>
+    <string name="planner_action_keep">Keep %1$d → %2$d</string>
+    <string name="planner_frees_now">frees %1$s now</string>
+    <string name="planner_saves_planned">plans %1$s less</string>
+    <string name="downloads_paused_by_limit">Automatic downloads paused: your %1$s storage limit is full (%2$s used). Downloads you tap still go ahead.</string>
 </resources>

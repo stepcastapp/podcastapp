@@ -224,9 +224,20 @@ lessons), [PLAY_READINESS.md](PLAY_READINESS.md) (Play Store runbook).
   episode downloads instead of streaming.
 - **Storage dashboard** (Settings): downloaded footprint per show,
   one-tap per-show cleanup.
-- **Download storage limit** (GB, 0 = none): played downloads are removed
-  first to make room; unplayed ones never are — a download that still
-  won't fit fails with a reason. **Store downloads on SD card** (new
+- **Total download storage limit** (GB, all shows together, 0 = none).
+  It governs **automatic** downloads only: played downloads are removed
+  first to make room, then automatic downloads pause (the episode stays
+  "not downloaded", not failed). Episodes you download yourself always go
+  ahead. The Downloads screen says when automatic downloads are paused,
+  with the numbers.
+- **Storage planner** (Settings, and from that Downloads notice): what
+  downloads use now, what every show's "keep newest N" rule plans in
+  total versus the limit, and one-tap suggestions from listening history —
+  stop auto-downloading shows not heard in 60 days, or keep only about as
+  many as you finished in the last 30 days — each with the space it frees
+  now and the space it saves for good. Applying removes the surplus
+  unplayed downloads, never anything in Up Next, half-listened or
+  favorited. **Store downloads on SD card** (new
   downloads; falls back to phone storage if the card is gone).
 
 ## Feed health & maintenance

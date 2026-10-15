@@ -560,6 +560,37 @@ interface EpisodeDao {
     )
     suspend fun applySyncedPosition(id: Long, positionMs: Long, atMs: Long)
 
+    /** Storage planner: per-show listening signals. */
+    @Query(
+        "SELECT podcastId, MAX(playedAtMs) AS lastPlayedAtMs, MAX(lastPlayedMs) AS lastListenedMs, " +
+            "COALESCE(SUM(CASE WHEN played = 1 AND playedAtMs >= :sinceMs THEN 1 ELSE 0 END), 0) " +
+            "AS finishedSince FROM episodes GROUP BY podcastId"
+    )
+    suspend fun listeningByPodcast(sinceMs: Long): List<PodcastListening>
+
+    /** Storage planner: every downloaded file, lightweight. */
+    @Query(
+        "SELECT id, podcastId, localFilePath, pubDateMs, played, positionMs, favorite " +
+            "FROM episodes WHERE downloadStatus = 2 AND localFilePath IS NOT NULL"
+    )
+    suspend fun downloadedRows(): List<DownloadedRow>
+
+    @Query(
+        "SELECT durationMs FROM episodes WHERE podcastId = :podcastId AND durationMs > 0 " +
+            "ORDER BY pubDateMs DESC LIMIT 10"
+    )
+    suspend fun recentDurations(podcastId: Long): List<Long>
+
+    /**
+     * One-time repair: downloads the storage limit refused were recorded as
+     * FAILED (one attempt) — which auto-download then skips forever.
+     */
+    @Query(
+        "UPDATE episodes SET downloadStatus = 0, downloadProgress = 0, downloadAttempts = 0 " +
+            "WHERE downloadStatus = 3 AND downloadAttempts <= 1"
+    )
+    suspend fun resetSingleFailures(): Int
+
     /** Episodes finished inside a time window (the yearly recap). */
     @Query("SELECT COUNT(*) FROM episodes WHERE played = 1 AND playedAtMs BETWEEN :fromMs AND :toMs")
     suspend fun countPlayedBetween(fromMs: Long, toMs: Long): Int
@@ -875,6 +906,25 @@ data class EpisodeStateRow(
     val audioUrl: String,
     val played: Boolean,
     val playedAtMs: Long,
+    val positionMs: Long,
+    val favorite: Boolean
+)
+
+/** Projection for [EpisodeDao.listeningByPodcast]. */
+data class PodcastListening(
+    val podcastId: Long,
+    val lastPlayedAtMs: Long,
+    val lastListenedMs: Long,
+    val finishedSince: Int
+)
+
+/** Projection for [EpisodeDao.downloadedRows]. */
+data class DownloadedRow(
+    val id: Long,
+    val podcastId: Long,
+    val localFilePath: String,
+    val pubDateMs: Long,
+    val played: Boolean,
     val positionMs: Long,
     val favorite: Boolean
 )
