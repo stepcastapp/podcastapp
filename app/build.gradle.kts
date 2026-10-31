@@ -15,12 +15,12 @@ android {
         // Play requirement (2026): new releases must target Android 16
         targetSdk = 36
         // bump versionCode on every meaningful cut; versionName tracks the
-        // feature era (0.2 = post-review-program daily driver). The Play
+        // feature era (0.3 = storage planner + download fixes). The Play
         // release workflow overrides both per upload via -P properties.
         versionCode = (project.findProperty("stepcastVersionCode") as String?)
-            ?.toInt() ?: 2
+            ?.toInt() ?: 3
         versionName = (project.findProperty("stepcastVersionName") as String?)
-            ?: "0.2.0"
+            ?: "0.3.0"
         // Podcast Index directory credentials (optional; empty = off). From
         // -PpodcastIndexKey/-PpodcastIndexSecret or the environment, e.g.
         // GitHub secrets PODCASTINDEX_KEY / PODCASTINDEX_SECRET in CI.
